@@ -2,6 +2,7 @@
 
 import math
 import random
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -24,8 +25,14 @@ def calculate_stats(loader: torch.utils.data.DataLoader):
 
     for shoeprints, shoemarks in tqdm(loader):
         # Mean over batch, height and width, but not over channels
-        shoemarks_shaped = shoemarks.view(-1, *shoemarks.shape[2:])
-        batched_tensors = torch.cat([shoeprints, shoemarks_shaped], dim=0)
+
+        if len(shoemarks.shape) == 5:
+            reshaped_shoemarks = shoemarks.reshape(-1, *shoemarks.shape[-3:])
+        else:
+            # Don't overwrite loop variable
+            reshaped_shoemarks = shoemarks
+
+        batched_tensors = torch.cat([shoeprints, reshaped_shoemarks], dim=0)
         batched_tensors = batched_tensors.flatten(start_dim=2)  # [B, C, H*W]
 
         # Accumulate statistics
@@ -38,6 +45,18 @@ def calculate_stats(loader: torch.utils.data.DataLoader):
     std = torch.sqrt((sum_squares / total_pixels) - (mean**2))
 
     return mean, std
+
+
+def no_norm_transform(
+    image_size: tuple[int, int],
+):
+    """Initialise transforms with no normalisations, used for calculating dataset stats."""
+    return transforms.Compose(
+        [
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
+        ]
+    )
 
 
 def dataset_transform(
@@ -96,6 +115,7 @@ class LabeledCombinedDataset(Dataset):
         mode: _dataset_mode,
         shoeprint_transform,
         shoemark_transform,
+        all_shoemarks: bool = False,
     ):
         shoeprint_path = Path(shoeprint_path).expanduser() / mode
         shoemark_path = Path(shoemark_path).expanduser() / mode
@@ -111,6 +131,7 @@ class LabeledCombinedDataset(Dataset):
         self.shoeprint_transform = shoeprint_transform
         self.shoemark_transform = shoemark_transform
         self.mode = mode
+        self.all_shoemarks = all_shoemarks
 
     def __len__(self):
         return len(self.shoeprint_files)
@@ -118,18 +139,29 @@ class LabeledCombinedDataset(Dataset):
     def __getitem__(self, idx: int):
         shoeprint = self.shoeprint_files[idx]
         shoeprint_name = shoeprint.stem
-        shoeprint_image = Image.open(shoeprint)
+        shoeprint_image = Image.open(shoeprint).convert("RGB")
 
-        if self.mode == "train":
+        # Used for matching shoemark filenames to shoeprints
+        pattern = re.escape(shoeprint_name) + r"_\d+$"
+
+        if self.mode == "train" and not self.all_shoemarks:
             shoemark_file = random.choice(
-                [file for key, file in self.shoemark_files.items() if shoeprint_name in key]
+                [file for key, file in self.shoemark_files.items() if re.fullmatch(pattern, key)]
             )
-            shoemark = self.shoemark_transform(Image.open(shoemark_file))
+            shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
+        # Used for calculating dataset statistics
+        elif self.mode == "train" and self.all_shoemarks:
+            shoemark_files = [
+                self.shoemark_transform(Image.open(file).convert("RGB"))
+                for key, file in self.shoemark_files.items()
+                if re.fullmatch(pattern, key)
+            ]
+            shoemark = torch.stack(shoemark_files)
         else:
             shoemark_files = [
-                file for key, file in self.shoemark_files.items() if shoeprint_name in key
+                file for key, file in self.shoemark_files.items() if re.fullmatch(pattern, key)
             ]
-            shoemark = self.shoemark_transform(Image.open(shoemark_files[0]))
+            shoemark = self.shoemark_transform(Image.open(shoemark_files[0]).convert("RGB"))
 
         shoeprint = self.shoeprint_transform(shoeprint_image)
 
