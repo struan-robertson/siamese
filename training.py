@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from src.datasets import LabeledCombinedDataset, dataset_transform
+from src.datasets import LabeledCombinedDataset, dataset_transform, no_norm_transform
 from src.model import SharedSiamese
 
 # * Config
@@ -25,8 +25,8 @@ image_size = (512, 256)
 shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/GAN Partitioned Half/Shoeprints/"
 shoemark_data_dir = "/home/struan/Extra/Generated Shoemarks/"
 
-dataset_mean = (0.5, 0.5, 0.5)
-dataset_std = (0.5, 0.5, 0.5)
+dataset_mean = (0.4388, 0.4995, 0.5579)
+dataset_std = (0.2830, 0.2721, 0.2810)
 
 test_shoeprint_data_dir = "/home/struan/Datasets/WVU2019 Cropped/Gallery"
 test_shoemark_data_dir = "/home/struan/Datasets/WVU2019 Cropped/Query"
@@ -97,7 +97,8 @@ val_dataloader = torch.utils.data.DataLoader(
     batch_size=batch_size,
     shuffle=False,
     num_workers=4,
-    drop_last=True,
+    pin_memory=False,
+    drop_last=False,
 )
 
 # * Main loop
@@ -105,7 +106,7 @@ val_dataloader = torch.utils.data.DataLoader(
 
 def _write_line(line: str, pbar: tqdm):
     pbar.write(line)
-    with Path("siamese/siamese.log").open("a") as f:
+    with Path("checkpoints/siamese.log").open("a") as f:
         f.write(line)
 
 
@@ -118,8 +119,6 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
     step = 0
 
     with tqdm(total=(epochs * len(dataset)) // batch_size, dynamic_ncols=True) as pbar:
-        val = validate()
-        _write_line(f"Validation: p5 = {val}\n", pbar)
         for epoch in range(epochs):
             pbar.set_description(f"Epoch: {epoch}")
             losses = 0
@@ -173,13 +172,13 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
                 losses += loss.item()
 
                 if step % print_iter == 0 and step != 0:
-                    line = f"{(losses / print_iter)}\n"
+                    line = f"Step {step} loss: {(losses / print_iter)}\n"
                     _write_line(line, pbar)
                     losses = 0
 
                 if step % val_iter == 0:
                     val = validate()
-                    line = f"Step {step} validation: p5 = {val}\n"
+                    line = f"Step {step} p5 validation: = {val}\n"
                     _write_line(line, pbar)
 
                 if step % save_iter == 0 and step != 0:
@@ -188,7 +187,7 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
                             "model_state_dict": model.state_dict(),
                             "optim_state_dict": optimizer.state_dict(),
                         },
-                        f"siamese/siamese_{epoch}.tar",
+                        f"checkpoints/siamese_{step}.tar",
                     )
 
                 optimizer.zero_grad()
@@ -197,6 +196,18 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
 
                 pbar.update()
                 step += 1
+
+    val = validate()
+    line = f"Step {step} p5 validation: = {val}\n"
+    _write_line(line, pbar)
+
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optim_state_dict": optimizer.state_dict(),
+        },
+        f"checkpoints/siamese_{step}.tar",
+    )
 
 
 # * Validation
@@ -229,7 +240,7 @@ def validate(p: int = 5):
     # Calculate top-p% accuracy
     k = max(1, int(len(dataset) * p / 100))
 
-    return (ranks <= k).mean().item()
+    return (ranks <= k).float().mean().item()
 
 
 # * Testing
@@ -241,7 +252,7 @@ def test(p: int = 5, checkpoint: str | None = None):
     model.eval()
 
     if checkpoint is not None:
-        checkpoint = torch.load("siamese/siamese_235.tar")
+        checkpoint = torch.load(checkpoint)
         model.load_state_dict(checkpoint["model_state_dict"])  # pyright: ignore
 
     shoeprint_path = Path(test_shoeprint_data_dir)
@@ -291,15 +302,7 @@ def test(p: int = 5, checkpoint: str | None = None):
 
 
 if __name__ == "__main__":
-    # checkpoint = torch.load("siamese.bkp/siamese_225.tar")
+    checkpoint = torch.load("checkpoints/siamese_225.tar")
 
-    # model.load_state_dict(checkpoint["model_state_dict"])
-    # optimizer.load_state_dict(checkpoint["optim_state_dict"])
-
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "optim_state_dict": optimizer.state_dict(),
-        },
-        "siamese/siamese_final.tar",
-    )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optim_state_dict"])

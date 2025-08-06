@@ -11,7 +11,7 @@ class SharedSiamese(nn.Module):
     def __init__(self, embedding_size=128):
         super().__init__()
 
-        self.model = torchvision.models.resnext101_64x4d(weights="DEFAULT")
+        self.model = torchvision.models.resnet50(weights=None)
 
         # Replace final FC layer with embedding layers
         # self.model.conv1 = nn.Conv2d(
