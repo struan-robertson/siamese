@@ -65,6 +65,7 @@ def dataset_transform(
     mean: float | tuple[float, float, float],
     std: float | tuple[float, float, float],
     offset: bool = False,
+    flip: bool = True,
 ):
     """Initialise transforms for a dataset."""
     transform_list = [
@@ -75,6 +76,9 @@ def dataset_transform(
 
     if offset:
         transform_list.append(RandomOffsetTransormation())
+
+    if flip:
+        transform_list.append(transforms.RandomHorizontalFlip())
 
     return transforms.Compose(transform_list)
 

@@ -22,8 +22,8 @@ margin = 0.5
 batch_size = 32
 image_size = (512, 256)
 
-shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/GAN Partitioned Half/Shoeprints/"
-shoemark_data_dir = "/home/struan/Extra/Generated Shoemarks/"
+shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoeprints"
+shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemarks"
 
 dataset_mean = (0.4388, 0.4995, 0.5579)
 dataset_std = (0.2830, 0.2721, 0.2810)
@@ -58,8 +58,10 @@ criterion = torch.nn.TripletMarginLoss(margin=margin, p=p_val, swap=True)
 
 # * Data
 
-normal_transform = dataset_transform(image_size, mean=dataset_mean, std=dataset_std)
-augmented_transform = dataset_transform(image_size, mean=dataset_mean, std=dataset_std, offset=True)
+normal_transform = dataset_transform(image_size, mean=dataset_mean, std=dataset_std, flip=False)
+augmented_transform = dataset_transform(
+    image_size, mean=dataset_mean, std=dataset_std, offset=True, flip=True
+)
 
 # ** Training
 
@@ -302,7 +304,9 @@ def test(p: int = 5, checkpoint: str | None = None):
 
 
 if __name__ == "__main__":
-    checkpoint = torch.load("checkpoints/siamese_225.tar")
+    # checkpoint = torch.load("checkpoints/siamese_225.tar")
 
-    model.load_state_dict(checkpoint["model_state_dict"])
-    optimizer.load_state_dict(checkpoint["optim_state_dict"])
+    # model.load_state_dict(checkpoint["model_state_dict"])
+    # optimizer.load_state_dict(checkpoint["optim_state_dict"])
+
+    training_loop(steps=100_000, print_iter=50, val_iter=500, save_iter=500)
