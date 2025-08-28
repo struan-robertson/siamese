@@ -283,12 +283,14 @@ def test(p: int = 5, checkpoint: str | None = None):
 
     # There are many potential shoemarks for each shoeprint
     shoeprint_embeddings = {
-        f.stem[:3]: calc_embedding(f, "shoeprint").squeeze() for f in shoeprint_files
+        int(f.stem): calc_embedding(f, "shoeprint").squeeze() for f in shoeprint_files
     }
     shoeprint_ids = list(shoeprint_embeddings.keys())
     shoeprint_embeddings = torch.stack(list(shoeprint_embeddings.values()))  # Create tensor
 
-    shoemark_embeddings = {f.stem: calc_embedding(f, "shoemark").squeeze() for f in shoemark_files}
+    shoemark_embeddings = {
+        int(f.stem): calc_embedding(f, "shoemark").squeeze() for f in shoemark_files
+    }
 
     model.train()
 
@@ -303,7 +305,7 @@ def test(p: int = 5, checkpoint: str | None = None):
         sorted_dists = torch.argsort(dists)
 
         # Get the index of the correct shoeprint
-        correct_idx = shoeprint_ids.index(shoe_id[:3])
+        correct_idx = shoeprint_ids.index(shoe_id)
 
         # Get the position of the correct index
         rank = (sorted_dists == int(correct_idx)).nonzero().item()
