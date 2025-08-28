@@ -3,13 +3,14 @@
 import math
 import random
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
 
-from src.datasets import LabeledCombinedDataset, dataset_transform, no_norm_transform
+from src.datasets import LabeledCombinedDataset, dataset_transform
 from src.model import SharedSiamese
 
 # * Config
@@ -23,10 +24,12 @@ batch_size = 32
 image_size = (512, 256)
 
 shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoeprints"
-shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemarks"
+shoeprint_dataset_mean = (0.8864, 0.8864, 0.8864)
+shoeprint_dataset_std = (0.2424, 0.2424, 0.2424)
 
-dataset_mean = (0.4388, 0.4995, 0.5579)
-dataset_std = (0.2830, 0.2721, 0.2810)
+shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemarks"
+shoemark_dataset_mean = (0.6739, 0.6194, 0.5622)
+shoemark_dataset_std = (0.2489, 0.2591, 0.2871)
 
 test_shoeprint_data_dir = "/home/struan/Datasets/WVU2019 Cropped/Gallery"
 test_shoemark_data_dir = "/home/struan/Datasets/WVU2019 Cropped/Query"
@@ -58,10 +61,14 @@ criterion = torch.nn.TripletMarginLoss(margin=margin, p=p_val, swap=True)
 
 # * Data
 
-normal_transform = dataset_transform(image_size, mean=dataset_mean, std=dataset_std, flip=False)
-augmented_transform = dataset_transform(
-    image_size, mean=dataset_mean, std=dataset_std, offset=True, flip=True
+shoeprint_transform = dataset_transform(
+    image_size, mean=shoeprint_dataset_mean, std=shoeprint_dataset_std, flip=False
 )
+
+shoemark_transform = dataset_transform(
+    image_size, mean=shoemark_dataset_mean, std=shoemark_dataset_std, flip=True
+)
+
 
 # ** Training
 
@@ -69,8 +76,8 @@ dataset = LabeledCombinedDataset(
     shoeprint_data_dir,
     shoemark_data_dir,
     mode="train",
-    shoeprint_transform=normal_transform,
-    shoemark_transform=augmented_transform,
+    shoeprint_transform=shoeprint_transform,
+    shoemark_transform=shoemark_transform,
 )
 
 loader = torch.utils.data.DataLoader(
@@ -90,8 +97,8 @@ val_dataset = LabeledCombinedDataset(
     shoeprint_data_dir,
     shoemark_data_dir,
     mode="val",
-    shoeprint_transform=normal_transform,
-    shoemark_transform=normal_transform,
+    shoeprint_transform=shoeprint_transform,
+    shoemark_transform=shoemark_transform,
 )
 
 val_dataloader = torch.utils.data.DataLoader(
@@ -263,19 +270,25 @@ def test(p: int = 5, checkpoint: str | None = None):
     shoeprint_files = list(shoeprint_path.rglob("*.png"))
     shoemark_files = list(shoemark_path.rglob("*.png"))
 
-    transform = dataset_transform(image_size, mean=dataset_mean, std=dataset_std, offset=False)
-
-    def calc_embedding(f: Path):
+    def calc_embedding(f: Path, print_type: Literal["shoeprint", "shoemark"]):
         i = Image.open(f).convert("RGB")  # Not all test sets are RGB
-        t = transform(i).to(device)  # pyright: ignore [reportAttributeAccessIssue]
+
+        t = (
+            shoeprint_transform(i).to(device)  # pyright: ignore [reportAttributeAccessIssue]
+            if print_type == "shoeprint"
+            else shoemark_transform(i).to(device)  # pyright: ignore [reportAttributeAccessIssue]
+        )
+
         return model(t.unsqueeze(0)).cpu()
 
     # There are many potential shoemarks for each shoeprint
-    shoeprint_embeddings = {f.stem[:3]: calc_embedding(f).squeeze() for f in shoeprint_files}
+    shoeprint_embeddings = {
+        f.stem[:3]: calc_embedding(f, "shoeprint").squeeze() for f in shoeprint_files
+    }
     shoeprint_ids = list(shoeprint_embeddings.keys())
     shoeprint_embeddings = torch.stack(list(shoeprint_embeddings.values()))  # Create tensor
 
-    shoemark_embeddings = {f.stem: calc_embedding(f).squeeze() for f in shoemark_files}
+    shoemark_embeddings = {f.stem: calc_embedding(f, "shoemark").squeeze() for f in shoemark_files}
 
     model.train()
 

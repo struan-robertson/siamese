@@ -2,7 +2,7 @@
 
 import math
 import random
-import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Literal
 
@@ -18,45 +18,24 @@ _dataset_mode = Literal["train", "test", "val"]
 
 def calculate_stats(loader: torch.utils.data.DataLoader):
     """Calculate per-channel mean and std using explicit sum of squares."""
-    num_channels = loader.dataset[0][0].shape[0]
+    num_channels = loader.dataset[0].shape[0]
     sum_pixels = torch.zeros(num_channels)
     sum_squares = torch.zeros(num_channels)
     total_pixels = 0
 
-    for shoeprints, shoemarks in tqdm(loader):
-        # Mean over batch, height and width, but not over channels
-
-        if len(shoemarks.shape) == 5:
-            reshaped_shoemarks = shoemarks.reshape(-1, *shoemarks.shape[-3:])
-        else:
-            # Don't overwrite loop variable
-            reshaped_shoemarks = shoemarks
-
-        batched_tensors = torch.cat([shoeprints, reshaped_shoemarks], dim=0)
-        batched_tensors = batched_tensors.flatten(start_dim=2)  # [B, C, H*W]
+    for image in tqdm(loader):  # [B, C, H, W]
+        flattened = image.flatten(start_dim=2)  # [B, C, H*W]
 
         # Accumulate statistics
-        sum_pixels += batched_tensors.sum(dim=(0, 2))
-        sum_squares += (batched_tensors**2).sum(dim=(0, 2))
-        total_pixels += batched_tensors.shape[0] * batched_tensors.shape[2]
+        sum_pixels += flattened.sum(dim=(0, 2))
+        sum_squares += (flattened**2).sum(dim=(0, 2))
+        total_pixels += flattened.shape[0] * flattened.shape[2]
 
     # Final calculations
     mean = sum_pixels / total_pixels
     std = torch.sqrt((sum_squares / total_pixels) - (mean**2))
 
     return mean, std
-
-
-def no_norm_transform(
-    image_size: tuple[int, int],
-):
-    """Initialise transforms with no normalisations, used for calculating dataset stats."""
-    return transforms.Compose(
-        [
-            transforms.Resize(image_size),
-            transforms.ToTensor(),
-        ]
-    )
 
 
 def dataset_transform(
@@ -108,6 +87,27 @@ class RandomOffsetTransormation:
         )
 
 
+class IndividualDataset(Dataset):
+    """Load either shoeprint or shoemark images. Used for statistic calculations."""
+
+    def __init__(self, path: Path | str, *, mode: _dataset_mode):
+        path = Path(path).expanduser() / mode
+
+        jpg_files = list(path.rglob("*.jpg"))
+        png_files = list(path.rglob("*.png"))
+
+        self.files = jpg_files + png_files
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        file = self.files[idx]
+        image = Image.open(file).convert("RGB")
+
+        return F.to_tensor(image)
+
+
 class LabeledCombinedDataset(Dataset):
     """Load shoeprint and shoemark images. Returns (shoeprint, (shoemarks)) tuples."""
 
@@ -119,53 +119,42 @@ class LabeledCombinedDataset(Dataset):
         mode: _dataset_mode,
         shoeprint_transform,
         shoemark_transform,
-        all_shoemarks: bool = False,
     ):
         shoeprint_path = Path(shoeprint_path).expanduser() / mode
         shoemark_path = Path(shoemark_path).expanduser() / mode
 
-        shoeprint_jpg_files = list(shoeprint_path.rglob("*.jpg"))
-        shoeprint_png_files = list(shoeprint_path.rglob("*.png"))
-        self.shoeprint_files = shoeprint_jpg_files + shoeprint_png_files
+        self.shoeprint_files = list(shoeprint_path.rglob("*.jpg")) + list(
+            shoeprint_path.rglob("*.png")
+        )
 
-        shoemark_jpg_files = list(shoemark_path.rglob("*.jpg"))
-        shoemark_png_files = list(shoemark_path.rglob("*.png"))
-        self.shoemark_files = {f.stem: f for f in shoemark_jpg_files + shoemark_png_files}
+        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(shoemark_path.rglob("*.png"))
+
+        shoemark_classes = defaultdict(list)
+
+        for f in shoemark_files:
+            class_id = int(f.stem.split("_")[0])
+            shoemark_classes[class_id].append(f)
+
+        self.shoemark_classes = shoemark_classes
 
         self.shoeprint_transform = shoeprint_transform
         self.shoemark_transform = shoemark_transform
         self.mode = mode
-        self.all_shoemarks = all_shoemarks
 
     def __len__(self):
         return len(self.shoeprint_files)
 
     def __getitem__(self, idx: int):
         shoeprint = self.shoeprint_files[idx]
-        shoeprint_name = shoeprint.stem
+        shoeprint_class = int(shoeprint.stem.split("_")[0])
         shoeprint_image = Image.open(shoeprint).convert("RGB")
 
-        # Used for matching shoemark filenames to shoeprints
-        pattern = re.escape(shoeprint_name) + r"_\d+$"
-
-        if self.mode == "train" and not self.all_shoemarks:
-            shoemark_file = random.choice(
-                [file for key, file in self.shoemark_files.items() if re.fullmatch(pattern, key)]
-            )
+        if self.mode == "train":
+            shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
             shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
-        # Used for calculating dataset statistics
-        elif self.mode == "train" and self.all_shoemarks:
-            shoemark_files = [
-                self.shoemark_transform(Image.open(file).convert("RGB"))
-                for key, file in self.shoemark_files.items()
-                if re.fullmatch(pattern, key)
-            ]
-            shoemark = torch.stack(shoemark_files)
         else:
-            shoemark_files = [
-                file for key, file in self.shoemark_files.items() if re.fullmatch(pattern, key)
-            ]
-            shoemark = self.shoemark_transform(Image.open(shoemark_files[0]).convert("RGB"))
+            shoemark_file = self.shoemark_classes[shoeprint_class][0]
+            shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
 
         shoeprint = self.shoeprint_transform(shoeprint_image)
 
