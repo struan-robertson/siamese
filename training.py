@@ -8,11 +8,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from tqdm import tqdm
-
 from src.config import load_config
 from src.datasets import LabeledCombinedDataset, dataset_transform
 from src.model import SharedSiamese
+from tqdm import tqdm
 
 # * Entry Point
 
@@ -48,7 +47,9 @@ random.seed(config["training"]["seed"])
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = SharedSiamese(embedding_size=config["hyperparameters"]["embedding_size"]).to(device)
+model = SharedSiamese(embedding_size=config["hyperparameters"]["embedding_size"]).to(
+    device
+)
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
 criterion = torch.nn.TripletMarginLoss(
     margin=config["hyperparameters"]["margin"],
@@ -143,7 +144,7 @@ fid_dataset = LabeledCombinedDataset(
 
 
 def _write_line(line: str, pbar: tqdm, checkpoint_dir: Path):
-    pbar.write(line)
+    pbar.write(line, end="")
     with (checkpoint_dir / "siamese.log").open("a") as f:
         f.write(line)
 
@@ -170,7 +171,9 @@ def training_loop():
 
                 # Pairwise distances matrix [N, N]
                 dists = torch.cdist(
-                    shoeprint_embeddings, shoemark_embeddings, p=config["hyperparameters"]["p_val"]
+                    shoeprint_embeddings,
+                    shoemark_embeddings,
+                    p=config["hyperparameters"]["p_val"],
                 )
 
                 # Positive distances
@@ -188,7 +191,7 @@ def training_loop():
                 # Store indices of selected negatives
                 neg_idxs = []
                 # As we don't drop the last batch, this may be less than overall batch size
-                current_batch_size = shoeprint_batch.shape(0)
+                current_batch_size = shoeprint_batch.shape[0]
                 for i in range(current_batch_size):
                     violation_inds = torch.where(semi_hard_mask[i])[0]
 
@@ -212,34 +215,34 @@ def training_loop():
                 # Calculate triplet loss
                 loss = criterion(shoeprint_embeddings, shoemark_embeddings, negatives)
 
-                losses += loss.item()
-
-                if epoch % config["training"]["print_iter"] == 0 and epoch != 0:
-                    line = f"Epoch {epoch} loss: {(losses / config['training']['print_iter'])}\n"
-                    _write_line(line, pbar, checkpoint_dir)
-                    losses = 0
-
-                if (
-                    epoch % config["training"]["val_iter"] == 0
-                    or epoch == config["training"]["epochs"] - 1
-                ):
-                    val = evaluate(p=5, dataset=val_dataset)
-                    line = f"Epoch {epoch} p5 validation: = {val}\n"
-                    _write_line(line, pbar, checkpoint_dir)
-
-                    torch.save(
-                        {
-                            "model_state_dict": model.state_dict(),
-                            "optim_state_dict": optimizer.state_dict(),
-                        },
-                        checkpoint_dir / f"siamese_{epoch}.tar",
-                    )
-
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                pbar.update()
+                losses += loss.item()
+
+            if epoch % config["training"]["print_iter"] == 0 and epoch != 0:
+                line = f"Epoch {epoch} loss: {(losses / config['training']['print_iter'])}\n"
+                _write_line(line, pbar, checkpoint_dir)
+                losses = 0
+
+            if (
+                epoch % config["training"]["val_iter"] == 0
+                or epoch == config["training"]["epochs"] - 1
+            ) and epoch != 0:
+                val = evaluate(p=5, dataset=val_dataset)
+                line = f"Epoch {epoch} p5 validation: = {val}\n"
+                _write_line(line, pbar, checkpoint_dir)
+
+                torch.save(
+                    {
+                        "model_state_dict": model.state_dict(),
+                        "optim_state_dict": optimizer.state_dict(),
+                    },
+                    checkpoint_dir / f"siamese_{epoch}.tar",
+                )
+
+            pbar.update()
 
 
 # * Evaluation
@@ -272,7 +275,10 @@ def evaluate(
         # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
         if len(shoemarks) > 0:
             shoemark_embeddings[i] = torch.cat(
-                [model(shoemark.unsqueeze(0).to(device)).cpu() for shoemark in shoemarks]
+                [
+                    model(shoemark.unsqueeze(0).to(device)).cpu()
+                    for shoemark in shoemarks
+                ]
             )
 
     shoeprint_embeddings = torch.stack(shoeprint_embeddings)
@@ -284,7 +290,9 @@ def evaluate(
         # Compare distance between shoemark embedding and _all_ shoeprint embeddings
 
         dists = torch.cdist(
-            class_shoemark_embeddings, shoeprint_embeddings, p=config["hyperparameters"]["p_val"]
+            class_shoemark_embeddings,
+            shoeprint_embeddings,
+            p=config["hyperparameters"]["p_val"],
         )
 
         # Get indices of distances sorted small->large
