@@ -44,6 +44,9 @@ def dataset_transform(
     mean: float | tuple[float, float, float],
     std: float | tuple[float, float, float],
     offset: bool = False,
+    offset_translation: int = 128,
+    offset_max_rotation: int = 10,
+    offset_scale_diff: float = 0.25,
     flip: bool = True,
 ):
     """Initialise transforms for a dataset."""
@@ -54,7 +57,9 @@ def dataset_transform(
     ]
 
     if offset:
-        transform_list.append(RandomOffsetTransormation())
+        transform_list.append(
+            RandomOffsetTransormation(offset_translation, offset_max_rotation, offset_scale_diff)
+        )
 
     if flip:
         transform_list.append(transforms.RandomHorizontalFlip())
@@ -120,8 +125,12 @@ class LabeledCombinedDataset(Dataset):
         shoeprint_transform,
         shoemark_transform,
     ):
-        shoeprint_path = Path(shoeprint_path).expanduser() / mode
-        shoemark_path = Path(shoemark_path).expanduser() / mode
+        shoeprint_path = Path(shoeprint_path).expanduser()
+        shoemark_path = Path(shoemark_path).expanduser()
+
+        if mode != "test":
+            shoeprint_path = shoeprint_path / mode
+            shoemark_path = shoemark_path / mode
 
         self.shoeprint_files = list(shoeprint_path.rglob("*.jpg")) + list(
             shoeprint_path.rglob("*.png")
@@ -149,13 +158,30 @@ class LabeledCombinedDataset(Dataset):
         shoeprint_class = int(shoeprint.stem.split("_")[0])
         shoeprint_image = Image.open(shoeprint).convert("RGB")
 
-        if self.mode == "train":
-            shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
-            shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
-        else:
-            shoemark_file = self.shoemark_classes[shoeprint_class][0]
-            shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
-
         shoeprint = self.shoeprint_transform(shoeprint_image)
 
+        # For validation/testing we want to test all shoeprints for a shoemark
+        if self.mode in {"val", "test"}:
+            shoemark_files = self.shoemark_classes[shoeprint_class]
+            shoemarks = tuple(
+                self.shoemark_transform(Image.open(f).convert("RGB")) for f in shoemark_files
+            )
+
+            return shoeprint, shoemarks
+
+        shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
+        shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
+
         return shoeprint, shoemark
+
+    # Used for validation/test datasets where we don't work in batches
+    def __iter__(self):
+        self.current_idx = 0
+        return self
+
+    def __next__(self):
+        if self.current_idx >= len(self):
+            raise StopIteration
+        sample = self[self.current_idx]
+        self.current_idx += 1
+        return sample

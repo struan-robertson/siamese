@@ -2,6 +2,7 @@
 
 import math
 import random
+from collections import defaultdict
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +23,7 @@ p_val = 2
 margin = 0.5
 batch_size = 32
 image_size = (512, 256)
+embedding_size = 128
 
 shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoeprints"
 shoeprint_dataset_mean = (0.8864, 0.8864, 0.8864)
@@ -30,9 +32,6 @@ shoeprint_dataset_std = (0.2424, 0.2424, 0.2424)
 shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemarks"
 shoemark_dataset_mean = (0.6739, 0.6194, 0.5622)
 shoemark_dataset_std = (0.2489, 0.2591, 0.2871)
-
-test_shoeprint_data_dir = "/home/struan/Datasets/WVU2019 Cropped/Gallery"
-test_shoemark_data_dir = "/home/struan/Datasets/WVU2019 Cropped/Query"
 
 # * Seeding
 
@@ -55,18 +54,30 @@ random.seed(seed)
 # * PyTorch
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = SharedSiamese().to(device)
+model = SharedSiamese(embedding_size=embedding_size).to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+# TODO try with swap off?
 criterion = torch.nn.TripletMarginLoss(margin=margin, p=p_val, swap=True)
 
 # * Data
 
 shoeprint_transform = dataset_transform(
-    image_size, mean=shoeprint_dataset_mean, std=shoeprint_dataset_std, flip=False
+    image_size, mean=shoeprint_dataset_mean, std=shoeprint_dataset_std, offset=False, flip=False
 )
 
-shoemark_transform = dataset_transform(
-    image_size, mean=shoemark_dataset_mean, std=shoemark_dataset_std, flip=True
+shoemark_augmented_transform = dataset_transform(
+    image_size,
+    mean=shoemark_dataset_mean,
+    std=shoemark_dataset_std,
+    offset=True,
+    offset_translation=128,
+    offset_max_rotation=90,
+    offset_scale_diff=0.25,
+    flip=True,
+)
+
+shoemark_normal_transform = dataset_transform(
+    image_size, mean=shoemark_dataset_mean, std=shoemark_dataset_std, offset=False, flip=False
 )
 
 
@@ -77,7 +88,7 @@ dataset = LabeledCombinedDataset(
     shoemark_data_dir,
     mode="train",
     shoeprint_transform=shoeprint_transform,
-    shoemark_transform=shoemark_transform,
+    shoemark_transform=shoemark_augmented_transform,
 )
 
 loader = torch.utils.data.DataLoader(
@@ -98,16 +109,25 @@ val_dataset = LabeledCombinedDataset(
     shoemark_data_dir,
     mode="val",
     shoeprint_transform=shoeprint_transform,
-    shoemark_transform=shoemark_transform,
+    shoemark_transform=shoemark_normal_transform,
 )
 
-val_dataloader = torch.utils.data.DataLoader(
-    dataset,
-    batch_size=batch_size,
-    shuffle=False,
-    num_workers=4,
-    pin_memory=False,
-    drop_last=False,
+# ** Testing
+
+wvu_dataset = LabeledCombinedDataset(
+    "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoeprints/",
+    "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoemarks/",
+    mode="test",
+    shoeprint_transform=shoeprint_transform,
+    shoemark_transform=shoemark_normal_transform,
+)
+
+fid_dataset = LabeledCombinedDataset(
+    "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoeprints/",
+    "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoemarks/",
+    mode="test",
+    shoeprint_transform=shoeprint_transform,
+    shoemark_transform=shoemark_normal_transform,
 )
 
 # * Main loop
@@ -186,7 +206,7 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
                     losses = 0
 
                 if step % val_iter == 0:
-                    val = validate()
+                    val = evaluate(p=5, dataset=val_dataset)
                     line = f"Step {step} p5 validation: = {val}\n"
                     _write_line(line, pbar)
 
@@ -206,7 +226,7 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
                 pbar.update()
                 step += 1
 
-    val = validate()
+    val = evaluate(p=5, dataset=val_dataset)
     line = f"Step {step} p5 validation: = {val}\n"
     _write_line(line, pbar)
 
@@ -219,104 +239,58 @@ def training_loop(steps: int, print_iter: int, val_iter: int, save_iter: int):
     )
 
 
-# * Validation
+# * Evaluation
 
 
 @torch.no_grad()
-def validate(p: int = 5):
-    """Evaluate model on val set."""
+def evaluate(p: int = 5, *, dataset: LabeledCombinedDataset, checkpoint: str | Path | None = None):
+    """Evaluate model using all shoemarks in a dataset."""
     model.eval()
 
-    # This function is much simpler than test() as it only accounts for one shoemark per shoeprint
-    # TODO use all shoemarks per shoeprint
-    shoeprint_embeddings, shoemark_embeddings = [], []
-    for shoeprint, shoemark in val_dataloader:
-        shoeprint_embeddings.append(model(shoeprint.to(device)).cpu())
-        shoemark_embeddings.append(model(shoemark.to(device)).cpu())
+    def tensor_factory():
+        return torch.zeros(1)
 
-    model.train()
-
-    shoeprint_embeddings = torch.cat(shoeprint_embeddings)  # [N, d]
-    shoemark_embeddings = torch.cat(shoemark_embeddings)  # [N, d]
-
-    # Pairwise distances matrix [N, N]
-    dists = torch.cdist(shoeprint_embeddings, shoemark_embeddings, p=p_val)
-
-    # Get ranks (position of correct match in sorted distances)
-    # The diagonal here gives the distance between corresponding shoeprints and shoemarks
-    ranks = (dists.diag().unsqueeze(1) >= dists).sum(dim=1).float()
-
-    # Calculate top-p% accuracy
-    k = max(1, int(len(dataset) * p / 100))
-
-    return (ranks <= k).float().mean().item()
-
-
-# * Testing
-
-
-@torch.no_grad()
-def test(p: int = 5, checkpoint: str | None = None):
-    """Evaluate model on test set, optionally loading from a checkpoint."""
-    model.eval()
-
-    if checkpoint is not None:
+    if checkpoint:
         checkpoint = torch.load(checkpoint)
         model.load_state_dict(checkpoint["model_state_dict"])  # pyright: ignore
 
-    shoeprint_path = Path(test_shoeprint_data_dir)
-    shoemark_path = Path(test_shoemark_data_dir)
+    shoeprint_embeddings = []
+    shoemark_embeddings = defaultdict(tensor_factory)
 
-    shoeprint_files = list(shoeprint_path.rglob("*.png"))
-    shoemark_files = list(shoemark_path.rglob("*.png"))
+    for i, (shoeprint, shoemarks) in enumerate(dataset):
+        shoeprint_embedding = model(shoeprint.unsqueeze(0).to(device)).cpu()
+        shoeprint_embeddings.append(shoeprint_embedding.squeeze())
 
-    def calc_embedding(f: Path, print_type: Literal["shoeprint", "shoemark"]):
-        i = Image.open(f).convert("RGB")  # Not all test sets are RGB
+        # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
+        if len(shoemarks) > 0:
+            shoemark_embeddings[i] = torch.cat(
+                [model(shoemark.unsqueeze(0).to(device)).cpu() for shoemark in shoemarks]
+            )
 
-        t = (
-            shoeprint_transform(i).to(device)  # pyright: ignore [reportAttributeAccessIssue]
-            if print_type == "shoeprint"
-            else shoemark_transform(i).to(device)  # pyright: ignore [reportAttributeAccessIssue]
-        )
-
-        return model(t.unsqueeze(0)).cpu()
-
-    # There are many potential shoemarks for each shoeprint
-    shoeprint_embeddings = {
-        int(f.stem): calc_embedding(f, "shoeprint").squeeze() for f in shoeprint_files
-    }
-    shoeprint_ids = list(shoeprint_embeddings.keys())
-    shoeprint_embeddings = torch.stack(list(shoeprint_embeddings.values()))  # Create tensor
-
-    shoemark_embeddings = {
-        int(f.stem): calc_embedding(f, "shoemark").squeeze() for f in shoemark_files
-    }
+    shoeprint_embeddings = torch.stack(shoeprint_embeddings)
 
     model.train()
 
     ranks = []
-    for shoe_id, shoemark_embedding in shoemark_embeddings.items():
+    for shoe_id, class_shoemark_embeddings in shoemark_embeddings.items():
         # Compare distance between shoemark embedding and _all_ shoeprint embeddings
-        dists = torch.cdist(
-            shoemark_embedding.unsqueeze(0), shoeprint_embeddings, p=p_val
-        ).squeeze()
 
-        # Sort indices of distances sorted small->large
+        dists = torch.cdist(class_shoemark_embeddings, shoeprint_embeddings, p=p_val)
+
+        # Get indices of distances sorted small->large
         sorted_dists = torch.argsort(dists)
 
-        # Get the index of the correct shoeprint
-        correct_idx = shoeprint_ids.index(shoe_id)
+        shoemark_ranks = (sorted_dists == shoe_id).nonzero()
 
-        # Get the position of the correct index
-        rank = (sorted_dists == int(correct_idx)).nonzero().item()
-
-        ranks.append(rank)
+        ranks += [t.item() for t in shoemark_ranks[:, 1]]
 
     ranks = np.array(ranks)
 
-    k = max(1, int(len(shoeprint_files) * p / 100))
+    k = math.ceil(max(1, len(shoeprint_embeddings) * p / 100))
     return np.mean(ranks <= k)
 
+
+# * Entry Point
 
 if __name__ == "__main__":
     # checkpoint = torch.load("checkpoints/siamese_225.tar")
