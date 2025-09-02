@@ -44,7 +44,7 @@ def dataset_transform(
     mean: float | tuple[float, float, float],
     std: float | tuple[float, float, float],
     offset: bool = False,
-    offset_translation: int = 128,
+    offset_translation: tuple[int, int] = (64, 32),
     offset_max_rotation: int = 10,
     offset_scale_diff: float = 0.25,
     flip: bool = True,
@@ -58,7 +58,9 @@ def dataset_transform(
 
     if offset:
         transform_list.append(
-            RandomOffsetTransormation(offset_translation, offset_max_rotation, offset_scale_diff)
+            RandomOffsetTransormation(
+                offset_translation, offset_max_rotation, offset_scale_diff
+            )
         )
 
     if flip:
@@ -70,15 +72,21 @@ def dataset_transform(
 class RandomOffsetTransormation:
     """Randomly shift the image in any direction and rotate."""
 
-    def __init__(self, offset: int = 128, max_rotation: int = 10, scale_diff: float = 0.25):
+    def __init__(
+        self,
+        offset: tuple[int, int] = (64, 32),
+        max_rotation: int = 10,
+        scale_diff: float = 0.25,
+    ):
         self.offset = offset
         self.max_rotation = max_rotation
         self.scale_diff = scale_diff
 
+    # TODO check this actually works
     def __call__(self, img):
         angle_rad = torch.rand(1).item() * 2 * math.pi
-        dx = int(self.offset * math.cos(angle_rad))
-        dy = int(self.offset * math.sin(angle_rad))
+        dy = int(self.offset[0] * math.sin(angle_rad))
+        dx = int(self.offset[1] * math.cos(angle_rad))
         rotation = torch.empty(1).uniform_(-self.max_rotation, self.max_rotation).item()
         scale = torch.empty(1).uniform_(1 - self.scale_diff, 1 + self.scale_diff).item()
 
@@ -136,7 +144,9 @@ class LabeledCombinedDataset(Dataset):
             shoeprint_path.rglob("*.png")
         )
 
-        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(shoemark_path.rglob("*.png"))
+        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(
+            shoemark_path.rglob("*.png")
+        )
 
         shoemark_classes = defaultdict(list)
 
@@ -164,7 +174,8 @@ class LabeledCombinedDataset(Dataset):
         if self.mode in {"val", "test"}:
             shoemark_files = self.shoemark_classes[shoeprint_class]
             shoemarks = tuple(
-                self.shoemark_transform(Image.open(f).convert("RGB")) for f in shoemark_files
+                self.shoemark_transform(Image.open(f).convert("RGB"))
+                for f in shoemark_files
             )
 
             return shoeprint, shoemarks

@@ -1,8 +1,9 @@
 """Define typed config options."""
 
-import tomllib
 from pathlib import Path
 from typing import TypedDict
+
+import tomllib
 
 
 class _Hyperparameters(TypedDict):
@@ -14,7 +15,7 @@ class _Hyperparameters(TypedDict):
 
 
 class _Augmentation(TypedDict):
-    max_translation: int
+    max_translation: tuple[int, int]
     max_rotation: int
     max_scale: float
     flip: bool
