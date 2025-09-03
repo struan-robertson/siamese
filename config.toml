@@ -14,14 +14,14 @@ val_iter = 600
 name = "0.5_margin"
 
 [training.shoemark_augmentation]
-max_translation = 128
-max_rotation = 90
+max_translation = [64, 32]
+max_rotation = 45
 max_scale = 0.25
 flip = true
     
 [training.shoeprint_augmentation]
-max_translation = 64
-max_rotation = 45
+max_translation = [32, 16]
+max_rotation = 22
 max_scale = 0.125
 flip = false
 
@@ -30,7 +30,7 @@ shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoep
 shoeprint_dataset_mean = [0.8864, 0.8864, 0.8864]
 shoeprint_dataset_std = [0.2424, 0.2424, 0.2424]
 
-shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemark"
+shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemarks"
 shoemark_dataset_mean = [0.6739, 0.6194, 0.5622]
 shoemark_dataset_std = [0.2489, 0.2591, 0.2871]
 

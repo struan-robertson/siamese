@@ -2,22 +2,25 @@
 
 import math
 import random
+import shutil
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
+from tqdm import tqdm
+
 from src.config import load_config
 from src.datasets import LabeledCombinedDataset, dataset_transform
 from src.model import SharedSiamese
-from tqdm import tqdm
 
-# * Entry Point
+# * Config
+
 
 config = (
     load_config("config.toml")
-    if len(sys.argv) < 2 or sys.argv[1] == ""
+    if len(sys.argv) < 2 or sys.argv[1] == "" or sys.argv[1] == "-i"
     else load_config(sys.argv[1])
 )
 
@@ -47,9 +50,7 @@ random.seed(config["training"]["seed"])
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = SharedSiamese(embedding_size=config["hyperparameters"]["embedding_size"]).to(
-    device
-)
+model = SharedSiamese(embedding_size=config["hyperparameters"]["embedding_size"]).to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
 criterion = torch.nn.TripletMarginLoss(
     margin=config["hyperparameters"]["margin"],
@@ -59,7 +60,7 @@ criterion = torch.nn.TripletMarginLoss(
 
 # * Data
 
-shoeprint_transform = dataset_transform(
+shoeprint_augmented_transform = dataset_transform(
     config["data"]["image_size"],
     mean=config["data"]["shoeprint_dataset_mean"],
     std=config["data"]["shoeprint_dataset_std"],
@@ -68,6 +69,14 @@ shoeprint_transform = dataset_transform(
     offset_max_rotation=config["training"]["shoeprint_augmentation"]["max_rotation"],
     offset_scale_diff=config["training"]["shoeprint_augmentation"]["max_scale"],
     flip=config["training"]["shoeprint_augmentation"]["flip"],
+)
+
+shoeprint_normal_transform = dataset_transform(
+    config["data"]["image_size"],
+    mean=config["data"]["shoeprint_dataset_mean"],
+    std=config["data"]["shoeprint_dataset_std"],
+    offset=False,
+    flip=False,
 )
 
 shoemark_augmented_transform = dataset_transform(
@@ -96,7 +105,7 @@ dataset = LabeledCombinedDataset(
     config["data"]["shoeprint_data_dir"],
     config["data"]["shoemark_data_dir"],
     mode="train",
-    shoeprint_transform=shoeprint_transform,
+    shoeprint_transform=shoeprint_augmented_transform,
     shoemark_transform=shoemark_augmented_transform,
 )
 
@@ -117,7 +126,7 @@ val_dataset = LabeledCombinedDataset(
     config["data"]["shoeprint_data_dir"],
     config["data"]["shoemark_data_dir"],
     mode="val",
-    shoeprint_transform=shoeprint_transform,
+    shoeprint_transform=shoeprint_normal_transform,
     shoemark_transform=shoemark_normal_transform,
 )
 
@@ -127,7 +136,7 @@ wvu_dataset = LabeledCombinedDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoeprints/",
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoemarks/",
     mode="test",
-    shoeprint_transform=shoeprint_transform,
+    shoeprint_transform=shoeprint_normal_transform,
     shoemark_transform=shoemark_normal_transform,
 )
 
@@ -135,7 +144,7 @@ fid_dataset = LabeledCombinedDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoeprints/",
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoemarks/",
     mode="test",
-    shoeprint_transform=shoeprint_transform,
+    shoeprint_transform=shoeprint_normal_transform,
     shoemark_transform=shoemark_normal_transform,
 )
 
@@ -254,36 +263,34 @@ def evaluate(
     *,
     dataset: LabeledCombinedDataset,
     checkpoint: str | Path | None = None,
+    move_failures: bool = False,
 ):
     """Evaluate model using all shoemarks in a dataset."""
     model.eval()
-
-    def tensor_factory():
-        return torch.zeros(1)
 
     if checkpoint:
         checkpoint = torch.load(checkpoint)
         model.load_state_dict(checkpoint["model_state_dict"])  # pyright: ignore
 
-    shoeprint_embeddings = []
-    shoemark_embeddings = defaultdict(tensor_factory)
+    shoeprint_embeddings = defaultdict(lambda: torch.zeros(1))
+    shoemark_embeddings = defaultdict(lambda: torch.zeros(1))
 
-    for i, (shoeprint, shoemarks) in enumerate(dataset):
+    for shoeprint_class, (shoeprint, shoemarks) in dataset:
         shoeprint_embedding = model(shoeprint.unsqueeze(0).to(device)).cpu()
-        shoeprint_embeddings.append(shoeprint_embedding.squeeze())
+        shoeprint_embeddings[shoeprint_class] = shoeprint_embedding.squeeze()
 
         # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
         if len(shoemarks) > 0:
-            shoemark_embeddings[i] = torch.cat(
-                [
-                    model(shoemark.unsqueeze(0).to(device)).cpu()
-                    for shoemark in shoemarks
-                ]
+            shoemark_embeddings[shoeprint_class] = torch.cat(
+                [model(shoemark.unsqueeze(0).to(device)).cpu() for shoemark in shoemarks]
             )
 
-    shoeprint_embeddings = torch.stack(shoeprint_embeddings)
+    shoeprint_class_idxs = list(shoeprint_embeddings.keys())
+    shoeprint_embeddings = torch.stack(list(shoeprint_embeddings.values()))
 
     model.train()
+
+    k = math.ceil(max(1, len(shoeprint_embeddings) * p / 100))
 
     ranks = []
     for shoe_id, class_shoemark_embeddings in shoemark_embeddings.items():
@@ -298,13 +305,19 @@ def evaluate(
         # Get indices of distances sorted small->large
         sorted_dists = torch.argsort(dists)
 
-        shoemark_ranks = (sorted_dists == shoe_id).nonzero()
+        correct_idx = shoeprint_class_idxs.index(shoe_id)
+        shoemark_ranks = (sorted_dists == correct_idx).nonzero()
 
-        ranks += [t.item() for t in shoemark_ranks[:, 1]]
+        for shoemark_id, rank in enumerate([t.item() for t in shoemark_ranks[:, 1]]):
+            ranks.append(rank)
+            if move_failures and rank > k:
+                shutil.copy(
+                    config["data"]["shoemark_data_dir"] / "val" / f"{shoe_id}_{shoemark_id}.png",
+                    "failed_val/",
+                )
 
     ranks = np.array(ranks)
 
-    k = math.ceil(max(1, len(shoeprint_embeddings) * p / 100))
     return np.mean(ranks <= k)
 
 

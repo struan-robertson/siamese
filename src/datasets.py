@@ -58,9 +58,7 @@ def dataset_transform(
 
     if offset:
         transform_list.append(
-            RandomOffsetTransormation(
-                offset_translation, offset_max_rotation, offset_scale_diff
-            )
+            RandomOffsetTransormation(offset_translation, offset_max_rotation, offset_scale_diff)
         )
 
     if flip:
@@ -144,9 +142,7 @@ class LabeledCombinedDataset(Dataset):
             shoeprint_path.rglob("*.png")
         )
 
-        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(
-            shoemark_path.rglob("*.png")
-        )
+        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(shoemark_path.rglob("*.png"))
 
         shoemark_classes = defaultdict(list)
 
@@ -174,11 +170,10 @@ class LabeledCombinedDataset(Dataset):
         if self.mode in {"val", "test"}:
             shoemark_files = self.shoemark_classes[shoeprint_class]
             shoemarks = tuple(
-                self.shoemark_transform(Image.open(f).convert("RGB"))
-                for f in shoemark_files
+                self.shoemark_transform(Image.open(f).convert("RGB")) for f in shoemark_files
             )
 
-            return shoeprint, shoemarks
+            return shoeprint_class, (shoeprint, shoemarks)
 
         shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
         shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
