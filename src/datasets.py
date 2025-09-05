@@ -38,6 +38,27 @@ def calculate_stats(loader: torch.utils.data.DataLoader):
     return mean, std
 
 
+class IndividualDataset(Dataset):
+    """Load either shoeprint or shoemark images. Used for statistic calculations."""
+
+    def __init__(self, path: Path | str, *, mode: _dataset_mode = "train"):
+        path = Path(path).expanduser() / mode
+
+        jpg_files = list(path.rglob("*.jpg"))
+        png_files = list(path.rglob("*.png"))
+
+        self.files = jpg_files + png_files
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        file = self.files[idx]
+        image = Image.open(file).convert("RGB")
+
+        return F.to_tensor(image)
+
+
 def dataset_transform(
     image_size: tuple[int, int],
     *,
@@ -96,27 +117,6 @@ class RandomOffsetTransormation:
             shear=0.0,  # pyright: ignore [reportArgumentType]
             fill=1.0,  # pyright: ignore [reportArgumentType]
         )
-
-
-class IndividualDataset(Dataset):
-    """Load either shoeprint or shoemark images. Used for statistic calculations."""
-
-    def __init__(self, path: Path | str, *, mode: _dataset_mode):
-        path = Path(path).expanduser() / mode
-
-        jpg_files = list(path.rglob("*.jpg"))
-        png_files = list(path.rglob("*.png"))
-
-        self.files = jpg_files + png_files
-
-    def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, idx):
-        file = self.files[idx]
-        image = Image.open(file).convert("RGB")
-
-        return F.to_tensor(image)
 
 
 class LabeledCombinedDataset(Dataset):
