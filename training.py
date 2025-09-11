@@ -175,10 +175,9 @@ def training_loop():
             if (
                 config["training"]["pre_trained"]
                 and epoch % config["training"]["pre_trained_epoch_unfreeze"] == 0
-                and epoch != 0
             ):
                 idx = epoch // config["training"]["pre_trained_epoch_unfreeze"]
-                model.unfreeze_idx(-idx)
+                model.unfreeze_idx(idx)
 
             for shoeprint_batch, shoemark_batch in loader:
                 shoeprints = shoeprint_batch.to(device)

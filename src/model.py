@@ -1,6 +1,7 @@
 """Siamese model implementation."""
 
 import torch
+import torch.nn.functional as F
 import torchvision
 from torch import nn
 
@@ -12,50 +13,38 @@ class SharedSiamese(nn.Module):
         super().__init__()
 
         if pre_trained:
-            self.model = torchvision.models.resnet50(weights="DEFAULT")
-            self.freeze_except_fc()
+            model = torchvision.models.resnet50(weights="DEFAULT")
         else:
-            self.model = torchvision.models.resnet50(weights=None)
+            model = torchvision.models.resnet50(weights=None)
 
         # Replace final FC layer with embedding layers
-        # self.model.conv1 = nn.Conv2d(
-        #     1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False
-        # )
-        self.model.fc = nn.Linear(self.model.fc.in_features, embedding_size)
+        model.fc = nn.Linear(model.fc.in_features, embedding_size)
+        model.apply(self.init_weights)
 
-        self.model.apply(self.init_weights)
+        # Freeze model
+        for param in model.parameters():
+            param.requires_grad = False
 
-    def unfreeze_idx(self, idx):
-        children = list(self.model.children())
-        n = len(children)
+        self.batch_norm = nn.BatchNorm1d(embedding_size)
+        self.model = model
 
-        # Convert negative indices to positive equivalents
-        valid_indices = set()
+    def unfreeze_idx(self, idx: int):
+        layer_mappings = {
+            0: self.model.fc,
+            1: self.model.layer4,
+            2: self.model.layer3,
+            3: self.model.layer2,
+            4: self.model.layer1,
+            5: self.model.conv1,
+        }
 
-        if idx < 0:
-            idx = n + idx  # -1 becomes n-1, -2 becomes n-2, etc.
-        if 0 <= idx < n:
-            valid_indices.add(idx)
-        else:
-            return
-
-        # Unfreeze selected children
-        for idx in valid_indices:
-            for param in children[idx].parameters():
-                param.requires_grad = True
-
-    ## Completely unfreeze model
-    def unfreeze_all(self):
-        for param in self.model.parameters():
+        for param in layer_mappings[idx].parameters():  # pyright: ignore [reportAttributeAccessIssue]
             param.requires_grad = True
 
-    ## Revert to initial state (only fc trainable)
-    def freeze_except_fc(self):
-        for name, param in self.model.named_parameters():
-            param.requires_grad = "fc" in name
-
     def forward(self, x):
-        return self.model(x)
+        x = self.model(x)
+        x = self.batch_norm(x)
+        return F.normalize(x, p=2, dim=1)
 
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
