@@ -9,11 +9,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from tqdm import tqdm
-
 from src.config import load_config
 from src.datasets import LabeledCombinedDataset, dataset_transform
 from src.model import SharedSiamese
+from tqdm import tqdm
 
 # * Config
 
@@ -50,7 +49,10 @@ random.seed(config["training"]["seed"])
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = SharedSiamese(embedding_size=config["hyperparameters"]["embedding_size"]).to(device)
+model = SharedSiamese(
+    embedding_size=config["hyperparameters"]["embedding_size"],
+    pre_trained=config["training"]["pre_trained"],
+).to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
 criterion = torch.nn.TripletMarginLoss(
     margin=config["hyperparameters"]["margin"],
@@ -170,6 +172,14 @@ def training_loop():
             pbar.set_description(f"Epoch: {epoch}")
             losses = 0
 
+            if (
+                config["training"]["pre_trained"]
+                and epoch % config["training"]["pre_trained_epoch_unfreeze"] == 0
+                and epoch != 0
+            ):
+                idx = epoch // config["training"]["pre_trained_epoch_unfreeze"]
+                model.unfreeze_idx(-idx)
+
             for shoeprint_batch, shoemark_batch in loader:
                 shoeprints = shoeprint_batch.to(device)
                 shoemarks = shoemark_batch.to(device)
@@ -282,7 +292,10 @@ def evaluate(
         # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
         if len(shoemarks) > 0:
             shoemark_embeddings[shoeprint_class] = torch.cat(
-                [model(shoemark.unsqueeze(0).to(device)).cpu() for shoemark in shoemarks]
+                [
+                    model(shoemark.unsqueeze(0).to(device)).cpu()
+                    for shoemark in shoemarks
+                ]
             )
 
     shoeprint_class_idxs = list(shoeprint_embeddings.keys())
@@ -312,7 +325,9 @@ def evaluate(
             ranks.append(rank)
             if move_failures and rank > k:
                 shutil.copy(
-                    config["data"]["shoemark_data_dir"] / "val" / f"{shoe_id}_{shoemark_id}.png",
+                    config["data"]["shoemark_data_dir"]
+                    / "val"
+                    / f"{shoe_id}_{shoemark_id}.png",
                     "failed_val/",
                 )
 
