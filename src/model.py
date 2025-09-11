@@ -8,10 +8,14 @@ from torch import nn
 class SharedSiamese(nn.Module):
     """Siamese model with shared weights."""
 
-    def __init__(self, embedding_size=128):
+    def __init__(self, embedding_size=128, *, pre_trained: bool = False):
         super().__init__()
 
-        self.model = torchvision.models.resnet50(weights=None)
+        if pre_trained:
+            self.model = torchvision.models.resnet50(weights="DEFAULT")
+            self.freeze_except_fc()
+        else:
+            self.model = torchvision.models.resnet50(weights=None)
 
         # Replace final FC layer with embedding layers
         # self.model.conv1 = nn.Conv2d(

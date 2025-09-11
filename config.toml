@@ -1,13 +1,14 @@
 [hyperparameters]
 p_val = 2
 margin = 1
-batch_size = 50
+batch_size = 45
 embedding_size = 128
 triplet_swapping = true
 
 [training]
 seed = 4242
-pre_trained = false
+pre_trained = true
+pre_trained_epoch_unfreeze = 175 # Number of epochs between layer unfreezes
 epochs = 10_000
 print_iter = 100
 val_iter = 500
@@ -26,16 +27,17 @@ max_scale = 0.125
 flip = false
 
 [data]
-shoeprint_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoeprints"
+shoeprint_data_dir = "/home/struan/Datasets/Siamese/Shoeprints"
 shoeprint_dataset_mean = [0.8864, 0.8864, 0.8864] 
 shoeprint_dataset_std = [0.2424, 0.2424, 0.2424]
 
-shoemark_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Shoemarks"
+shoemark_data_dir = "/home/struan/Datasets/Siamese/Shoemarks"
 shoemark_dataset_mean = [0.6919, 0.6443, 0.5891]
 shoemark_dataset_std = [0.2416, 0.2508, 0.2796]
 
-wvu_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/"
-fid_data_dir = "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoeprints/"
+
+wvu_data_dir = "/home/struan/Datasets/Siamese/Testing/WVU2019/"
+fid_data_dir = "/home/struan/Datasets/Siamese/Testing/FID-300/Shoeprints/"
 
 image_size = [512, 256]
 

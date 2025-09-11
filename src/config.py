@@ -24,6 +24,7 @@ class _Augmentation(TypedDict):
 class _Training(TypedDict):
     seed: int
     pre_trained: bool
+    pre_trained_epoch_unfreeze: int
     epochs: int
     print_iter: int
     val_iter: int
