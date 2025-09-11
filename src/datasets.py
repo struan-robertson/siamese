@@ -38,27 +38,6 @@ def calculate_stats(loader: torch.utils.data.DataLoader):
     return mean, std
 
 
-class IndividualDataset(Dataset):
-    """Load either shoeprint or shoemark images. Used for statistic calculations."""
-
-    def __init__(self, path: Path | str, *, mode: _dataset_mode = "train"):
-        path = Path(path).expanduser() / mode
-
-        jpg_files = list(path.rglob("*.jpg"))
-        png_files = list(path.rglob("*.png"))
-
-        self.files = jpg_files + png_files
-
-    def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, idx):
-        file = self.files[idx]
-        image = Image.open(file).convert("RGB")
-
-        return F.to_tensor(image)
-
-
 def dataset_transform(
     image_size: tuple[int, int],
     *,
@@ -119,8 +98,65 @@ class RandomOffsetTransormation:
         )
 
 
+class IndividualDataset(Dataset):
+    """Load either shoeprint or shoemark images. Used for statistic calculations."""
+
+    def __init__(self, path: Path | str, *, mode: _dataset_mode = "train"):
+        path = Path(path).expanduser() / mode
+
+        jpg_files = list(path.rglob("*.jpg"))
+        png_files = list(path.rglob("*.png"))
+
+        self.files = jpg_files + png_files
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        file = self.files[idx]
+        image = Image.open(file).convert("RGB")
+
+        return F.to_tensor(image)
+
+
+class LabeledIndividualDataset(Dataset):
+    "Load either shoeprint or shoemark images and their respective classes. Used for evaluation."
+
+    def __init__(self, path: Path | str, *, mode: _dataset_mode = "val", transform):
+        path = Path(path).expanduser() / mode if mode != "test" else Path(path).expanduser()
+
+        self.files = list(path.rglob("*.jpg")) + list(path.rglob("*.png"))
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        f = self.files[idx]
+
+        split = f.stem.split("_")
+        class_id = int(split[0])
+        image_id = int(split[1]) if len(split) > 1 else 0
+
+        image = Image.open(f).convert("RGB")
+
+        return (class_id, image_id), self.transform(image)
+
+    # Used for validation/test datasets where we don't work in batches
+    def __iter__(self):
+        self.current_idx = 0
+        return self
+
+    def __next__(self):
+        if self.current_idx >= len(self):
+            raise StopIteration
+        sample = self[self.current_idx]
+        self.current_idx += 1
+        return sample
+
+
 class LabeledCombinedDataset(Dataset):
-    """Load shoeprint and shoemark images. Returns (shoeprint, (shoemarks)) tuples."""
+    """Load shoeprint and shoemark images. Returns (shoeprint, shoemark, pair) tuples."""
 
     def __init__(
         self,
@@ -175,10 +211,19 @@ class LabeledCombinedDataset(Dataset):
 
             return shoeprint_class, (shoeprint, shoemarks)
 
-        shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
+        matching = random.random()
+        if matching:
+            shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
+        else:
+            non_matching_class = random.randint(0, len(self.shoemark_classes))
+
+            while non_matching_class == shoeprint_class:
+                non_matching_class = random.randint(0, len(self.shoemark_classes))
+            shoemark_file = random.choice(self.shoemark_classes[non_matching_class])
+
         shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
 
-        return shoeprint, shoemark
+        return shoeprint, shoemark, torch.tensor([matching])
 
     # Used for validation/test datasets where we don't work in batches
     def __iter__(self):

@@ -4,15 +4,15 @@ import math
 import random
 import shutil
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
-from src.config import load_config
-from src.datasets import LabeledCombinedDataset, dataset_transform
-from src.model import SharedSiamese
 from tqdm import tqdm
+
+from src.config import load_config
+from src.datasets import LabeledCombinedDataset, LabeledIndividualDataset, dataset_transform
+from src.model import BottleneckClassification, ShorterClassification
 
 # * Config
 
@@ -49,16 +49,12 @@ random.seed(config["training"]["seed"])
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = SharedSiamese(
-    embedding_size=config["hyperparameters"]["embedding_size"],
-    pre_trained=config["training"]["pre_trained"],
-).to(device)
+
+model = ShorterClassification().to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-criterion = torch.nn.TripletMarginLoss(
-    margin=config["hyperparameters"]["margin"],
-    p=config["hyperparameters"]["p_val"],
-    swap=config["hyperparameters"]["triplet_swapping"],
-)
+
+criterion = torch.nn.BCEWithLogitsLoss()
+
 
 # * Data
 
@@ -115,7 +111,7 @@ loader = torch.utils.data.DataLoader(
     dataset,
     batch_size=config["hyperparameters"]["batch_size"],
     shuffle=True,
-    num_workers=4,
+    num_workers=6,
     pin_memory=False,
     drop_last=False,
     worker_init_fn=seed_worker,
@@ -124,30 +120,42 @@ loader = torch.utils.data.DataLoader(
 
 # ** Validation
 
-val_dataset = LabeledCombinedDataset(
+shoeprint_val_dataset = LabeledIndividualDataset(
     config["data"]["shoeprint_data_dir"],
+    mode="val",
+    transform=shoeprint_normal_transform,
+)
+
+shoemark_val_dataset = LabeledIndividualDataset(
     config["data"]["shoemark_data_dir"],
     mode="val",
-    shoeprint_transform=shoeprint_normal_transform,
-    shoemark_transform=shoemark_normal_transform,
+    transform=shoemark_normal_transform,
 )
 
 # ** Testing
 
-wvu_dataset = LabeledCombinedDataset(
+wvu_shoeprint_dataset = LabeledIndividualDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoeprints/",
-    "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoemarks/",
     mode="test",
-    shoeprint_transform=shoeprint_normal_transform,
-    shoemark_transform=shoemark_normal_transform,
+    transform=shoeprint_normal_transform,
 )
 
-fid_dataset = LabeledCombinedDataset(
+wvu_shoemark_dataset = LabeledIndividualDataset(
+    "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoemarks/",
+    mode="test",
+    transform=shoemark_normal_transform,
+)
+
+fid_shoeprint_dataset = LabeledIndividualDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoeprints/",
+    mode="test",
+    transform=shoeprint_normal_transform,
+)
+
+fid_shoemark_dataset = LabeledIndividualDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoemarks/",
     mode="test",
-    shoeprint_transform=shoeprint_normal_transform,
-    shoemark_transform=shoemark_normal_transform,
+    transform=shoemark_normal_transform,
 )
 
 
@@ -172,67 +180,15 @@ def training_loop():
             pbar.set_description(f"Epoch: {epoch}")
             losses = 0
 
-            if (
-                config["training"]["pre_trained"]
-                and epoch % config["training"]["pre_trained_epoch_unfreeze"] == 0
-                and epoch != 0
-            ):
-                idx = epoch // config["training"]["pre_trained_epoch_unfreeze"]
-                model.unfreeze_idx(-idx)
-
-            for shoeprint_batch, shoemark_batch in loader:
+            for shoeprint_batch, shoemark_batch, label_batch in loader:
                 shoeprints = shoeprint_batch.to(device)
                 shoemarks = shoemark_batch.to(device)
+                labels = label_batch.to(device)
 
-                # Get embeddings
-                shoeprint_embeddings = model(shoeprints)  # [b, d]
-                shoemark_embeddings = model(shoemarks)  # [b, d]
+                output = model(shoeprints, shoemarks)
 
-                # Pairwise distances matrix [N, N]
-                dists = torch.cdist(
-                    shoeprint_embeddings,
-                    shoemark_embeddings,
-                    p=config["hyperparameters"]["p_val"],
-                )
-
-                # Positive distances
-                pos_dists = dists.diag().view(-1, 1)
-
-                # Mask to exclude the positive pairs (0s everywhere apart from the diagonal)
-                idt_mask = torch.eye(pos_dists.size(0), dtype=torch.bool, device=device)
-
-                # Identify semi-hard violations
-                semi_hard_mask = (dists > pos_dists) & (
-                    dists < pos_dists + config["hyperparameters"]["margin"]
-                )
-                semi_hard_mask[idt_mask] = False
-
-                # Store indices of selected negatives
-                neg_idxs = []
-                # As we don't drop the last batch, this may be less than overall batch size
-                current_batch_size = shoeprint_batch.shape[0]
-                for i in range(current_batch_size):
-                    violation_inds = torch.where(semi_hard_mask[i])[0]
-
-                    if len(violation_inds) > 0:
-                        # Get hardest violation
-                        hardest_violation_idx = violation_inds[
-                            torch.argmin(dists[i, violation_inds])
-                        ]
-                        neg_idxs.append(hardest_violation_idx.item())
-                    else:
-                        # Ensure not to select the positive
-                        candidates = [j for j in range(current_batch_size) if j != i]
-                        neg_idxs.append(random.choice(candidates))
-
-                # Convert to tensor indices
-                neg_idxs = torch.tensor(neg_idxs, device=device)
-
-                # Extract negative embeddings
-                negatives = shoemark_embeddings[neg_idxs]
-
-                # Calculate triplet loss
-                loss = criterion(shoeprint_embeddings, shoemark_embeddings, negatives)
+                # Calculate BCE loss
+                loss = criterion(output, labels)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -249,7 +205,11 @@ def training_loop():
                 epoch % config["training"]["val_iter"] == 0
                 or epoch == config["training"]["epochs"] - 1
             ) and epoch != 0:
-                val = evaluate(p=5, dataset=val_dataset)
+                val = evaluate(
+                    p=5,
+                    shoeprint_dataset=shoeprint_val_dataset,
+                    shoemark_dataset=shoemark_val_dataset,
+                )
                 line = f"Epoch {epoch} p5 validation: = {val}\n"
                 _write_line(line, pbar, checkpoint_dir)
 
@@ -271,7 +231,8 @@ def training_loop():
 def evaluate(
     p: int = 5,
     *,
-    dataset: LabeledCombinedDataset,
+    shoeprint_dataset: LabeledIndividualDataset,
+    shoemark_dataset: LabeledIndividualDataset,
     checkpoint: str | Path | None = None,
     move_failures: bool = False,
 ):
@@ -282,54 +243,38 @@ def evaluate(
         checkpoint = torch.load(checkpoint)
         model.load_state_dict(checkpoint["model_state_dict"])  # pyright: ignore
 
-    shoeprint_embeddings = defaultdict(lambda: torch.zeros(1))
-    shoemark_embeddings = defaultdict(lambda: torch.zeros(1))
+    # Load all shoeprints
+    shoeprints = {
+        shoeprint_class: shoeprint for (shoeprint_class, _), shoeprint in shoeprint_dataset
+    }
+    shoeprint_tensors = torch.tensor(shoeprints.values())
+    shoeprint_class_idxs = list(shoeprints.keys())
 
-    for shoeprint_class, (shoeprint, shoemarks) in dataset:
-        shoeprint_embedding = model(shoeprint.unsqueeze(0).to(device)).cpu()
-        shoeprint_embeddings[shoeprint_class] = shoeprint_embedding.squeeze()
-
-        # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
-        if len(shoemarks) > 0:
-            shoemark_embeddings[shoeprint_class] = torch.cat(
-                [
-                    model(shoemark.unsqueeze(0).to(device)).cpu()
-                    for shoemark in shoemarks
-                ]
-            )
-
-    shoeprint_class_idxs = list(shoeprint_embeddings.keys())
-    shoeprint_embeddings = torch.stack(list(shoeprint_embeddings.values()))
-
-    model.train()
-
-    k = math.ceil(max(1, len(shoeprint_embeddings) * p / 100))
-
+    k = math.ceil(max(1, len(shoeprints) * p / 100))
     ranks = []
-    for shoe_id, class_shoemark_embeddings in shoemark_embeddings.items():
-        # Compare distance between shoemark embedding and _all_ shoeprint embeddings
-
-        dists = torch.cdist(
-            class_shoemark_embeddings,
-            shoeprint_embeddings,
-            p=config["hyperparameters"]["p_val"],
+    # Compare every shoemark against every shoeprint and see where it ranks
+    for (shoemark_class, shoemark_id), shoemark in shoemark_dataset:
+        probabilities = torch.tensor(
+            [
+                model(shoeprint.unsqueeze(0).to(device), shoemark.unsqueeze(0).to(device)).cpu()
+                for shoeprint in shoeprint_tensors.values()
+            ]
         )
 
-        # Get indices of distances sorted small->large
-        sorted_dists = torch.argsort(dists)
+        sorted_probabilities = torch.argsort(probabilities)
+        correct_idx = shoeprint_class_idxs.index(shoemark_class)
 
-        correct_idx = shoeprint_class_idxs.index(shoe_id)
-        shoemark_ranks = (sorted_dists == correct_idx).nonzero()
+        shoemark_rank = (sorted_probabilities == correct_idx).nonzero().item()
 
-        for shoemark_id, rank in enumerate([t.item() for t in shoemark_ranks[:, 1]]):
-            ranks.append(rank)
-            if move_failures and rank > k:
-                shutil.copy(
-                    config["data"]["shoemark_data_dir"]
-                    / "val"
-                    / f"{shoe_id}_{shoemark_id}.png",
-                    "failed_val/",
-                )
+        ranks.append(shoemark_rank)
+
+        if move_failures and shoemark_rank > k:
+            shutil.copy(
+                config["data"]["shoemark_data_dir"] / "val" / f"{shoemark_class}_{shoemark_id}.png",
+                "failed_val/",
+            )
+
+    model.train()
 
     ranks = np.array(ranks)
 

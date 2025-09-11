@@ -1,14 +1,8 @@
 [hyperparameters]
-p_val = 2
-margin = 1
 batch_size = 45
-embedding_size = 128
-triplet_swapping = true
 
 [training]
 seed = 4242
-pre_trained = true
-pre_trained_epoch_unfreeze = 175 # Number of epochs between layer unfreezes
 epochs = 10_000
 print_iter = 100
 val_iter = 500

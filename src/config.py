@@ -1,17 +1,12 @@
 """Define typed config options."""
 
+import tomllib
 from pathlib import Path
 from typing import TypedDict
 
-import tomllib
-
 
 class _Hyperparameters(TypedDict):
-    p_val: int
-    margin: float
     batch_size: int
-    embedding_size: int
-    triplet_swapping: bool
 
 
 class _Augmentation(TypedDict):
@@ -23,8 +18,6 @@ class _Augmentation(TypedDict):
 
 class _Training(TypedDict):
     seed: int
-    pre_trained: bool
-    pre_trained_epoch_unfreeze: int
     epochs: int
     print_iter: int
     val_iter: int
