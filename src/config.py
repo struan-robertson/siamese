@@ -23,6 +23,7 @@ class _Augmentation(TypedDict):
 
 class _Training(TypedDict):
     seed: int
+    gpu_number: int
     pre_trained: bool
     pre_trained_epoch_unfreeze: int
     epochs: int

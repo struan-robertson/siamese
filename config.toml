@@ -7,7 +7,7 @@ triplet_swapping = true
 
 [training]
 seed = 4242
-pre_trained = false
+gpu_number = 1
 pre_trained = true
 pre_trained_epoch_unfreeze = 175 # Number of epochs between layer unfreezes
 epochs = 10_000

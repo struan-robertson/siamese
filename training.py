@@ -48,12 +48,26 @@ random.seed(config["training"]["seed"])
 # * PyTorch
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = SharedSiamese(
+device = torch.device(
+    f"cuda:{config['training']['gpu_number']}" if torch.cuda.is_available() else "cpu"
+)
+
+shoeprint_model = SharedSiamese(
     embedding_size=config["hyperparameters"]["embedding_size"],
     pre_trained=config["training"]["pre_trained"],
 ).to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+shoemark_model = SharedSiamese(
+    embedding_size=config["hyperparameters"]["embedding_size"],
+    pre_trained=config["training"]["pre_trained"],
+).to(device)
+
+shoeprint_optimizer = torch.optim.AdamW(
+    shoeprint_model.parameters(), lr=0.001, weight_decay=1e-4
+)
+shoemark_optimizer = torch.optim.AdamW(
+    shoemark_model.parameters(), lr=0.001, weight_decay=1e-4
+)
+
 criterion = torch.nn.TripletMarginLoss(
     margin=config["hyperparameters"]["margin"],
     p=config["hyperparameters"]["p_val"],
@@ -178,15 +192,16 @@ def training_loop():
                 and epoch != 0
             ):
                 idx = epoch // config["training"]["pre_trained_epoch_unfreeze"]
-                model.unfreeze_idx(-idx)
+                shoeprint_model.unfreeze_idx(-idx)
+                shoemark_model.unfreeze_idx(-idx)
 
             for shoeprint_batch, shoemark_batch in loader:
                 shoeprints = shoeprint_batch.to(device)
                 shoemarks = shoemark_batch.to(device)
 
                 # Get embeddings
-                shoeprint_embeddings = model(shoeprints)  # [b, d]
-                shoemark_embeddings = model(shoemarks)  # [b, d]
+                shoeprint_embeddings = shoeprint_model(shoeprints)  # [b, d]
+                shoemark_embeddings = shoemark_model(shoemarks)  # [b, d]
 
                 # Pairwise distances matrix [N, N]
                 dists = torch.cdist(
@@ -234,9 +249,11 @@ def training_loop():
                 # Calculate triplet loss
                 loss = criterion(shoeprint_embeddings, shoemark_embeddings, negatives)
 
-                optimizer.zero_grad()
+                shoeprint_optimizer.zero_grad()
+                shoemark_optimizer.zero_grad()
                 loss.backward()
-                optimizer.step()
+                shoeprint_optimizer.step()
+                shoemark_optimizer.step()
 
                 losses += loss.item()
 
@@ -255,8 +272,10 @@ def training_loop():
 
                 torch.save(
                     {
-                        "model_state_dict": model.state_dict(),
-                        "optim_state_dict": optimizer.state_dict(),
+                        "shoeprint_model_state_dict": shoeprint_model.state_dict(),
+                        "shoemark_model_state_dict": shoemark_model.state_dict(),
+                        "shoeprint_optim_state_dict": shoeprint_optimizer.state_dict(),
+                        "shoemark_optim_state_dict": shoemark_optimizer.state_dict(),
                     },
                     checkpoint_dir / f"siamese_{epoch}.tar",
                 )
@@ -276,7 +295,8 @@ def evaluate(
     move_failures: bool = False,
 ):
     """Evaluate model using all shoemarks in a dataset."""
-    model.eval()
+    shoeprint_model.eval()
+    shoemark_model.eval()
 
     if checkpoint:
         checkpoint = torch.load(checkpoint)
@@ -286,14 +306,14 @@ def evaluate(
     shoemark_embeddings = defaultdict(lambda: torch.zeros(1))
 
     for shoeprint_class, (shoeprint, shoemarks) in dataset:
-        shoeprint_embedding = model(shoeprint.unsqueeze(0).to(device)).cpu()
+        shoeprint_embedding = shoeprint_model(shoeprint.unsqueeze(0).to(device)).cpu()
         shoeprint_embeddings[shoeprint_class] = shoeprint_embedding.squeeze()
 
         # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
         if len(shoemarks) > 0:
             shoemark_embeddings[shoeprint_class] = torch.cat(
                 [
-                    model(shoemark.unsqueeze(0).to(device)).cpu()
+                    shoemark_model(shoemark.unsqueeze(0).to(device)).cpu()
                     for shoemark in shoemarks
                 ]
             )
@@ -301,7 +321,8 @@ def evaluate(
     shoeprint_class_idxs = list(shoeprint_embeddings.keys())
     shoeprint_embeddings = torch.stack(list(shoeprint_embeddings.values()))
 
-    model.train()
+    shoeprint_model.train()
+    shoemark_model.train()
 
     k = math.ceil(max(1, len(shoeprint_embeddings) * p / 100))
 
