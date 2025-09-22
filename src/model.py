@@ -1,7 +1,6 @@
 """Siamese model implementation."""
 
 import torch
-import torch.nn.functional as F
 import torchvision
 from torch import nn
 
@@ -9,7 +8,14 @@ from torch import nn
 class SharedSiamese(nn.Module):
     """Siamese model with shared weights."""
 
-    def __init__(self, embedding_size=128, *, pre_trained: bool = False):
+    def __init__(
+        self,
+        embedding_size=128,
+        *,
+        pre_trained: bool = False,
+        refreeze: bool = False,
+        permafrost: int = 0,
+    ):
         super().__init__()
 
         if pre_trained:
@@ -22,8 +28,11 @@ class SharedSiamese(nn.Module):
         model.apply(self.init_weights)
 
         # Freeze model
-        for param in model.parameters():
-            param.requires_grad = False
+        if pre_trained:
+            for param in model.parameters():
+                param.requires_grad = False
+        self.permafrost = permafrost
+        self.refreeze = refreeze
 
         self.batch_norm = nn.BatchNorm1d(embedding_size)
         self.model = model
@@ -38,13 +47,18 @@ class SharedSiamese(nn.Module):
             5: self.model.conv1,
         }
 
+        if self.permafrost > 0 and idx > self.permafrost:
+            return
+
         for param in layer_mappings[idx].parameters():  # pyright: ignore [reportAttributeAccessIssue]
             param.requires_grad = True
 
+        if self.refreeze and idx >= 1 and idx <= 5:
+            for param in layer_mappings[idx - 1].parameters():  # pyright: ignore [reportAttributeAccessIssue]
+                param.requires_grad = False
+
     def forward(self, x):
-        x = self.model(x)
-        x = self.batch_norm(x)
-        return F.normalize(x, p=2, dim=1)
+        return self.model(x)
 
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
