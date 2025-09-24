@@ -54,11 +54,16 @@ device = torch.device(
 
 shoeprint_model = SharedSiamese(
     embedding_size=config["hyperparameters"]["embedding_size"],
-    pre_trained=config["training"]["pre_trained"],
+    pre_trained=config["training"]["pre_training"]["pre_trained"],
+    refreeze=config["training"]["pre_training"]["refreeze"],
+    permafrost=config["training"]["pre_training"]["permafrost"],
 ).to(device)
+
 shoemark_model = SharedSiamese(
     embedding_size=config["hyperparameters"]["embedding_size"],
-    pre_trained=config["training"]["pre_trained"],
+    pre_trained=config["training"]["pre_training"]["pre_trained"],
+    refreeze=config["training"]["pre_training"]["refreeze"],
+    permafrost=config["training"]["pre_training"]["permafrost"],
 ).to(device)
 
 shoeprint_optimizer = torch.optim.AdamW(
@@ -186,16 +191,6 @@ def training_loop():
             pbar.set_description(f"Epoch: {epoch}")
             losses = 0
 
-            if (
-                config["training"]["pre_trained"]
-                and epoch % config["training"]["pre_trained_epoch_unfreeze"] == 0
-            ):
-                idx = (
-                    epoch // config["training"]["pre_trained_epoch_unfreeze"]
-                )  # Fully connected is already unfrozen
-                shoeprint_model.unfreeze_idx(idx)
-                shoemark_model.unfreeze_idx(idx)
-
             for shoeprint_batch, shoemark_batch in loader:
                 shoeprints = shoeprint_batch.to(device)
                 shoemarks = shoemark_batch.to(device)
@@ -280,6 +275,14 @@ def training_loop():
                     },
                     checkpoint_dir / f"siamese_{epoch}.tar",
                 )
+
+            if (
+                config["training"]["pre_training"]["pre_trained"]
+                and epoch % config["training"]["pre_training"]["epoch_unfreeze"] == 0
+            ):
+                idx = epoch // config["training"]["pre_training"]["epoch_unfreeze"]
+                shoeprint_model.unfreeze_idx(idx)
+                shoemark_model.unfreeze_idx(idx)
 
             pbar.update()
 

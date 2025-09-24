@@ -21,15 +21,21 @@ class _Augmentation(TypedDict):
     flip: bool
 
 
+class _PreTraining(TypedDict):
+    pre_trained: bool
+    epoch_unfreeze: int
+    permafrost: int
+    refreeze: bool
+
+
 class _Training(TypedDict):
     seed: int
-    gpu_number: int
-    pre_trained: bool
-    pre_trained_epoch_unfreeze: int
     epochs: int
     print_iter: int
     val_iter: int
     name: str
+    gpu_number: int
+    pre_training: _PreTraining
     shoemark_augmentation: _Augmentation
     shoeprint_augmentation: _Augmentation
 
