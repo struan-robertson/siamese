@@ -58,7 +58,9 @@ def dataset_transform(
 
     if offset:
         transform_list.append(
-            RandomOffsetTransormation(offset_translation, offset_max_rotation, offset_scale_diff)
+            RandomOffsetTransormation(
+                offset_translation, offset_max_rotation, offset_scale_diff
+            )
         )
 
     if flip:
@@ -123,7 +125,11 @@ class LabeledIndividualDataset(Dataset):
     "Load either shoeprint or shoemark images and their respective classes. Used for evaluation."
 
     def __init__(self, path: Path | str, *, mode: _dataset_mode = "val", transform):
-        path = Path(path).expanduser() / mode if mode != "test" else Path(path).expanduser()
+        path = (
+            Path(path).expanduser() / mode
+            if mode != "test"
+            else Path(path).expanduser()
+        )
 
         self.files = list(path.rglob("*.jpg")) + list(path.rglob("*.png"))
         self.transform = transform
@@ -178,7 +184,9 @@ class LabeledCombinedDataset(Dataset):
             shoeprint_path.rglob("*.png")
         )
 
-        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(shoemark_path.rglob("*.png"))
+        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(
+            shoemark_path.rglob("*.png")
+        )
 
         shoemark_classes = defaultdict(list)
 
@@ -206,24 +214,27 @@ class LabeledCombinedDataset(Dataset):
         if self.mode in {"val", "test"}:
             shoemark_files = self.shoemark_classes[shoeprint_class]
             shoemarks = tuple(
-                self.shoemark_transform(Image.open(f).convert("RGB")) for f in shoemark_files
+                self.shoemark_transform(Image.open(f).convert("RGB"))
+                for f in shoemark_files
             )
 
             return shoeprint_class, (shoeprint, shoemarks)
 
-        matching = random.random()
+        matching = random.choice([True, False])
         if matching:
+            label = torch.tensor(1, dtype=torch.float)
             shoemark_file = random.choice(self.shoemark_classes[shoeprint_class])
         else:
-            non_matching_class = random.randint(0, len(self.shoemark_classes))
+            label = torch.tensor(0, dtype=torch.float)
+            non_matching_class = random.choice(list(self.shoemark_classes.keys()))
 
             while non_matching_class == shoeprint_class:
-                non_matching_class = random.randint(0, len(self.shoemark_classes))
+                non_matching_class = random.choice(list(self.shoemark_classes.keys()))
             shoemark_file = random.choice(self.shoemark_classes[non_matching_class])
 
         shoemark = self.shoemark_transform(Image.open(shoemark_file).convert("RGB"))
 
-        return shoeprint, shoemark, torch.tensor([matching])
+        return shoeprint, shoemark, label
 
     # Used for validation/test datasets where we don't work in batches
     def __iter__(self):

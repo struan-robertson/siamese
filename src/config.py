@@ -1,8 +1,9 @@
 """Define typed config options."""
 
-import tomllib
 from pathlib import Path
 from typing import TypedDict
+
+import tomllib
 
 
 class _Hyperparameters(TypedDict):
@@ -26,6 +27,10 @@ class _Training(TypedDict):
     shoeprint_augmentation: _Augmentation
 
 
+class _Inference(TypedDict):
+    batch_size: int
+
+
 class _Data(TypedDict):
     shoeprint_data_dir: Path
     shoeprint_dataset_mean: tuple[float, float, float]
@@ -43,6 +48,7 @@ class Config(TypedDict):
 
     hyperparameters: _Hyperparameters
     training: _Training
+    inference: _Inference
     data: _Data
 
 

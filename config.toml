@@ -8,6 +8,9 @@ print_iter = 100
 val_iter = 500
 name = "baseline"
 
+[inference]
+batch_size = 180
+
 [training.shoemark_augmentation]
 max_translation = [64, 32]
 max_rotation = 45

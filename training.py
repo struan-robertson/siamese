@@ -8,11 +8,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from tqdm import tqdm
-
 from src.config import load_config
-from src.datasets import LabeledCombinedDataset, LabeledIndividualDataset, dataset_transform
+from src.datasets import (
+    LabeledCombinedDataset,
+    LabeledIndividualDataset,
+    dataset_transform,
+)
 from src.model import BottleneckClassification, ShorterClassification
+from tqdm import tqdm
 
 # * Config
 
@@ -50,8 +53,9 @@ random.seed(config["training"]["seed"])
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-model = ShorterClassification().to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+# model = ShorterClassification().to(device)
+model = BottleneckClassification().to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
 
 criterion = torch.nn.BCEWithLogitsLoss()
 
@@ -111,8 +115,8 @@ loader = torch.utils.data.DataLoader(
     dataset,
     batch_size=config["hyperparameters"]["batch_size"],
     shuffle=True,
-    num_workers=6,
-    pin_memory=False,
+    num_workers=4,
+    pin_memory=True,
     drop_last=False,
     worker_init_fn=seed_worker,
     persistent_workers=True,
@@ -185,7 +189,7 @@ def training_loop():
                 shoemarks = shoemark_batch.to(device)
                 labels = label_batch.to(device)
 
-                output = model(shoeprints, shoemarks)
+                output = model(shoeprints, shoemarks).squeeze()
 
                 # Calculate BCE loss
                 loss = criterion(output, labels)
@@ -227,6 +231,7 @@ def training_loop():
 # * Evaluation
 
 
+# TODO refactor for quicker evaluation
 @torch.no_grad()
 def evaluate(
     p: int = 5,
@@ -243,26 +248,44 @@ def evaluate(
         checkpoint = torch.load(checkpoint)
         model.load_state_dict(checkpoint["model_state_dict"])  # pyright: ignore
 
-    # Load all shoeprints
-    shoeprints = {
-        shoeprint_class: shoeprint for (shoeprint_class, _), shoeprint in shoeprint_dataset
-    }
-    shoeprint_tensors = torch.tensor(shoeprints.values())
-    shoeprint_class_idxs = list(shoeprints.keys())
+    shoeprint_loader = torch.utils.data.DataLoader(
+        shoeprint_dataset,
+        batch_size=config["inference"]["batch_size"],
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
 
-    k = math.ceil(max(1, len(shoeprints) * p / 100))
+    # Load all shoeprints with their classes
+    shoeprint_tensors = []
+    shoeprint_classes = []
+
+    for batch in shoeprint_loader:
+        (classes, _), images = batch
+        shoeprint_tensors.append(images)
+        shoeprint_classes.extend(classes)
+
+    k = math.ceil(max(1, len(shoeprint_classes) * p / 100))
     ranks = []
+
     # Compare every shoemark against every shoeprint and see where it ranks
-    for (shoemark_class, shoemark_id), shoemark in shoemark_dataset:
-        probabilities = torch.tensor(
+    for (shoemark_class, shoemark_id), shoemark in tqdm(
+        shoemark_dataset, desc="Evaluating: "
+    ):
+        probabilities = torch.stack(
             [
-                model(shoeprint.unsqueeze(0).to(device), shoemark.unsqueeze(0).to(device)).cpu()
-                for shoeprint in shoeprint_tensors.values()
+                model(
+                    shoeprints.to(device),
+                    shoemark.to(device).expand(len(shoeprints), *shoemark.shape),
+                )
+                .cpu()
+                .squeeze()
+                for shoeprints in shoeprint_tensors
             ]
-        )
+        ).flatten()
 
         sorted_probabilities = torch.argsort(probabilities)
-        correct_idx = shoeprint_class_idxs.index(shoemark_class)
+        correct_idx = shoeprint_classes.index(shoemark_class)
 
         shoemark_rank = (sorted_probabilities == correct_idx).nonzero().item()
 
@@ -270,7 +293,9 @@ def evaluate(
 
         if move_failures and shoemark_rank > k:
             shutil.copy(
-                config["data"]["shoemark_data_dir"] / "val" / f"{shoemark_class}_{shoemark_id}.png",
+                config["data"]["shoemark_data_dir"]
+                / "val"
+                / f"{shoemark_class}_{shoemark_id}.png",
                 "failed_val/",
             )
 

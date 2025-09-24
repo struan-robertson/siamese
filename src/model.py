@@ -83,14 +83,19 @@ class BottleneckClassification(nn.Module):
         # TODO Test simpler bottleneck
         self.bottleneck = nn.Sequential(
             nn.Conv2d(2048, 512, kernel_size=(1, 1), stride=(1, 1), bias=False),
-            nn.BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
-            nn.Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
-            nn.BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
+            nn.BatchNorm2d(
+                512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True
+            ),
+            nn.Conv2d(
+                512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
+            ),
+            nn.BatchNorm2d(
+                512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True
+            ),
             nn.Conv2d(512, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False),
             nn.ReLU(inplace=True),
         )
 
-        # TODO Test frozen layer 4 with pretrained weights, potentially unfreezing
         self.final = nn.Sequential(
             resnet.layer4,
             nn.AdaptiveAvgPool2d(output_size=(1, 1)),
