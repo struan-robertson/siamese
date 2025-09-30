@@ -285,11 +285,12 @@ def training_loop():
 
             if (
                 config["training"]["pre_training"]["pre_trained"]
-                and epoch % config["training"]["pre_training"]["epoch_unfreeze"] == 0
+                and (epoch - config["training"]["pre_training"]["defrost"])
+                % config["training"]["pre_training"]["epoch_unfreeze"]
+                == 0
             ):
-                idx = epoch // config["training"]["pre_training"]["epoch_unfreeze"]
-                shoeprint_model.unfreeze_idx(idx)
-                shoemark_model.unfreeze_idx(idx)
+                shoeprint_model.unfreeze_next()
+                shoemark_model.unfreeze_next()
 
             pbar.update()
 

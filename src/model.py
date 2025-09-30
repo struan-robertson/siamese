@@ -40,6 +40,13 @@ class SharedSiamese(nn.Module):
         if pre_trained:
             self.unfreeze_idx(0)
 
+            self.last_frozen = 1
+
+    def unfreeze_next(self):
+        self.unfreeze_idx(self.last_frozen)
+        self.last_frozen += 1
+
+    # TODO clean this implementation up as the idea of idx doesn't really make any sense
     def unfreeze_idx(self, idx: int):
         layer_mappings = {
             0: self.model.fc,
