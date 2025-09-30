@@ -10,8 +10,9 @@ from pathlib import Path
 import numpy as np
 import torch
 from src.config import load_config
-from src.datasets import LabeledCombinedDataset, dataset_transform
+from src.datasets import LabeledCombinedDataset, gpu_transform
 from src.model import SharedSiamese
+from torchvision import transforms
 from tqdm import tqdm
 
 # * Config
@@ -81,7 +82,7 @@ criterion = torch.nn.TripletMarginLoss(
 
 # * Data
 
-shoeprint_augmented_transform = dataset_transform(
+shoeprint_augmented_transform = gpu_transform(
     config["data"]["image_size"],
     mean=config["data"]["shoeprint_dataset_mean"],
     std=config["data"]["shoeprint_dataset_std"],
@@ -92,7 +93,7 @@ shoeprint_augmented_transform = dataset_transform(
     flip=config["training"]["shoeprint_augmentation"]["flip"],
 )
 
-shoeprint_normal_transform = dataset_transform(
+shoeprint_normal_transform = gpu_transform(
     config["data"]["image_size"],
     mean=config["data"]["shoeprint_dataset_mean"],
     std=config["data"]["shoeprint_dataset_std"],
@@ -100,7 +101,7 @@ shoeprint_normal_transform = dataset_transform(
     flip=False,
 )
 
-shoemark_augmented_transform = dataset_transform(
+shoemark_augmented_transform = gpu_transform(
     config["data"]["image_size"],
     mean=config["data"]["shoemark_dataset_mean"],
     std=config["data"]["shoemark_dataset_std"],
@@ -111,7 +112,7 @@ shoemark_augmented_transform = dataset_transform(
     flip=config["training"]["shoemark_augmentation"]["flip"],
 )
 
-shoemark_normal_transform = dataset_transform(
+shoemark_normal_transform = gpu_transform(
     config["data"]["image_size"],
     mean=config["data"]["shoemark_dataset_mean"],
     std=config["data"]["shoemark_dataset_std"],
@@ -126,19 +127,20 @@ dataset = LabeledCombinedDataset(
     config["data"]["shoeprint_data_dir"],
     config["data"]["shoemark_data_dir"],
     mode="train",
-    shoeprint_transform=shoeprint_augmented_transform,
-    shoemark_transform=shoemark_augmented_transform,
+    shoeprint_transform=transforms.ToTensor(),
+    shoemark_transform=transforms.ToTensor(),
 )
 
 loader = torch.utils.data.DataLoader(
     dataset,
     batch_size=config["hyperparameters"]["batch_size"],
     shuffle=True,
-    num_workers=4,
-    pin_memory=False,
+    num_workers=8,
+    pin_memory=True,
     drop_last=False,
     worker_init_fn=seed_worker,
     persistent_workers=True,
+    prefetch_factor=4,
 )
 
 # ** Validation
@@ -147,26 +149,27 @@ val_dataset = LabeledCombinedDataset(
     config["data"]["shoeprint_data_dir"],
     config["data"]["shoemark_data_dir"],
     mode="val",
-    shoeprint_transform=shoeprint_normal_transform,
-    shoemark_transform=shoemark_normal_transform,
+    shoeprint_transform=transforms.ToTensor(),
+    shoemark_transform=transforms.ToTensor(),
 )
 
 # ** Testing
 
+# TODO if this works then clean up adding transforms here
 wvu_dataset = LabeledCombinedDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoeprints/",
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/WVU2019/Shoemarks/",
     mode="test",
-    shoeprint_transform=shoeprint_normal_transform,
-    shoemark_transform=shoemark_normal_transform,
+    shoeprint_transform=transforms.ToTensor(),
+    shoemark_transform=transforms.ToTensor(),
 )
 
 fid_dataset = LabeledCombinedDataset(
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoeprints/",
     "/home/struan/Vault/University/Doctorate/Data/Siamese/Testing/FID-300/Shoemarks/",
     mode="test",
-    shoeprint_transform=shoeprint_normal_transform,
-    shoemark_transform=shoemark_normal_transform,
+    shoeprint_transform=transforms.ToTensor(),
+    shoemark_transform=transforms.ToTensor(),
 )
 
 
@@ -192,8 +195,12 @@ def training_loop():
             losses = 0
 
             for shoeprint_batch, shoemark_batch in loader:
-                shoeprints = shoeprint_batch.to(device)
-                shoemarks = shoemark_batch.to(device)
+                shoeprints = shoeprint_batch.to(device, non_blocking=True)
+                shoemarks = shoemark_batch.to(device, non_blocking=True)
+
+                # Transform on GPU
+                shoeprints = shoeprint_augmented_transform(shoeprints)
+                shoemarks = shoemark_augmented_transform(shoemarks)
 
                 # Get embeddings
                 shoeprint_embeddings = shoeprint_model(shoeprints)  # [b, d]
@@ -310,14 +317,17 @@ def evaluate(
     shoemark_embeddings = defaultdict(lambda: torch.zeros(1))
 
     for shoeprint_class, (shoeprint, shoemarks) in dataset:
-        shoeprint_embedding = shoeprint_model(shoeprint.unsqueeze(0).to(device)).cpu()
+        normalised_shoeprint = shoeprint_normal_transform(shoeprint.to(device))
+        shoeprint_embedding = shoeprint_model(normalised_shoeprint.unsqueeze(0)).cpu()
         shoeprint_embeddings[shoeprint_class] = shoeprint_embedding.squeeze()
 
         # Not as fast as batching all shoemarks but works for very large numbers of shoemarks
         if len(shoemarks) > 0:
             shoemark_embeddings[shoeprint_class] = torch.cat(
                 [
-                    shoemark_model(shoemark.unsqueeze(0).to(device)).cpu()
+                    shoemark_model(
+                        shoemark_normal_transform(shoemark.to(device)).unsqueeze(0)
+                    ).cpu()
                     for shoemark in shoemarks
                 ]
             )

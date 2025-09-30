@@ -59,7 +59,7 @@ class IndividualDataset(Dataset):
         return F.to_tensor(image)
 
 
-def dataset_transform(
+def gpu_transform(
     image_size: tuple[int, int],
     *,
     mean: float | tuple[float, float, float],
@@ -71,19 +71,17 @@ def dataset_transform(
     flip: bool = True,
 ):
     """Initialise transforms for a dataset."""
-    transform_list = [
-        transforms.Resize(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ]
+    transform_list = [transforms.Resize(image_size), transforms.Normalize(mean, std)]
 
     if offset:
         transform_list.append(
-            RandomOffsetTransormation(offset_translation, offset_max_rotation, offset_scale_diff)
+            RandomOffsetTransormation(
+                offset_translation, offset_max_rotation, offset_scale_diff
+            )  # pyright: ignore [reportArgumentType]
         )
 
     if flip:
-        transform_list.append(transforms.RandomHorizontalFlip())
+        transform_list.append(transforms.RandomHorizontalFlip())  # pyright: ignore [reportArgumentType]
 
     return transforms.Compose(transform_list)
 
@@ -142,7 +140,9 @@ class LabeledCombinedDataset(Dataset):
             shoeprint_path.rglob("*.png")
         )
 
-        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(shoemark_path.rglob("*.png"))
+        shoemark_files = list(shoemark_path.rglob("*.jpg")) + list(
+            shoemark_path.rglob("*.png")
+        )
 
         shoemark_classes = defaultdict(list)
 
@@ -170,7 +170,8 @@ class LabeledCombinedDataset(Dataset):
         if self.mode in {"val", "test"}:
             shoemark_files = self.shoemark_classes[shoeprint_class]
             shoemarks = tuple(
-                self.shoemark_transform(Image.open(f).convert("RGB")) for f in shoemark_files
+                self.shoemark_transform(Image.open(f).convert("RGB"))
+                for f in shoemark_files
             )
 
             return shoeprint_class, (shoeprint, shoemarks)
