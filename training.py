@@ -285,6 +285,7 @@ def training_loop():
 
             if (
                 config["training"]["pre_training"]["pre_trained"]
+                and epoch != 0
                 and (epoch - config["training"]["pre_training"]["defrost"])
                 % config["training"]["pre_training"]["epoch_unfreeze"]
                 == 0
