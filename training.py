@@ -45,6 +45,9 @@ torch.manual_seed(config["training"]["seed"])
 np.random.default_rng(config["training"]["seed"])
 random.seed(config["training"]["seed"])
 
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(config["training"]["seed"])
+    torch.cuda.manual_seed_all(config["training"]["seed"])
 
 # * PyTorch
 
