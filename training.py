@@ -135,12 +135,11 @@ loader = torch.utils.data.DataLoader(
     dataset,
     batch_size=config["hyperparameters"]["batch_size"],
     shuffle=True,
-    num_workers=8,
+    num_workers=4,
     pin_memory=True,
     drop_last=False,
     worker_init_fn=seed_worker,
     persistent_workers=True,
-    prefetch_factor=4,
 )
 
 # ** Validation
@@ -195,8 +194,8 @@ def training_loop():
             losses = 0
 
             for shoeprint_batch, shoemark_batch in loader:
-                shoeprints = shoeprint_batch.to(device, non_blocking=True)
-                shoemarks = shoemark_batch.to(device, non_blocking=True)
+                shoeprints = shoeprint_batch.to(device)
+                shoemarks = shoemark_batch.to(device)
 
                 # Transform on GPU
                 shoeprints = shoeprint_augmented_transform(shoeprints)
