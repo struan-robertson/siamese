@@ -285,8 +285,10 @@ def training_loop():
                     checkpoint_dir / f"siamese_{epoch}.tar",
                 )
 
+            # TODO tidy this up a bit
             if (
                 config["training"]["pre_training"]["pre_trained"]
+                and config["training"]["pre_training"]["frozen"]
                 and epoch != 0
                 and (epoch - config["training"]["pre_training"]["defrost"])
                 % config["training"]["pre_training"]["epoch_unfreeze"]

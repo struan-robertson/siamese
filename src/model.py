@@ -13,6 +13,7 @@ class SharedSiamese(nn.Module):
         embedding_size=128,
         *,
         pre_trained: bool = False,
+        frozen: bool = True,
         refreeze: bool = False,
         permafrost: int = 0,
     ):
@@ -29,7 +30,7 @@ class SharedSiamese(nn.Module):
 
         # Freeze model
         # TODO tidy this code up
-        if pre_trained:
+        if pre_trained and frozen:
             for param in model.parameters():
                 param.requires_grad = False
         self.permafrost = permafrost

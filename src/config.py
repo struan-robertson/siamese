@@ -23,6 +23,7 @@ class _Augmentation(TypedDict):
 
 class _PreTraining(TypedDict):
     pre_trained: bool
+    frozen: bool
     epoch_unfreeze: int
     defrost: int
     permafrost: int

@@ -17,6 +17,7 @@ name = "different_backbone_4_margin"
 pre_trained = true
 epoch_unfreeze = 2000 # Number of epochs between layer unfreezes
 defrost = 1000 # When to start layer unfreezing
+frozen = false
 # TODO try permafrost 5 when I have all my hyperparameters tuned and I train for longer
 permafrost = 4 # Number of layers to unfreeze before leaving frozen, 0 to unfreeze all 
 refreeze = false # Refreeze previous layer after unfreezing one before
