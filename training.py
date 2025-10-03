@@ -77,6 +77,14 @@ shoemark_optimizer = torch.optim.AdamW(
     shoemark_model.parameters(), lr=0.001, weight_decay=1e-4
 )
 
+shoeprint_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    shoeprint_optimizer, T_max=config["training"]["epochs"]
+)  # T_max is the maximum
+shoemark_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    shoemark_optimizer, T_max=config["training"]["epochs"]
+)  # T_max is the maximum
+
+
 criterion = torch.nn.TripletMarginLoss(
     margin=config["hyperparameters"]["margin"],
     p=config["hyperparameters"]["p_val"],
