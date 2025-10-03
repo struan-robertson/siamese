@@ -268,6 +268,9 @@ def training_loop():
                 shoeprint_optimizer.step()
                 shoemark_optimizer.step()
 
+                shoeprint_scheduler.step()
+                shoemark_scheduler.step()
+
                 losses += loss.item()
 
             if epoch % config["training"]["print_iter"] == 0 and epoch != 0:
