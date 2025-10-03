@@ -1,6 +1,6 @@
 [hyperparameters]
 p_val = 2
-margin = 4
+margin = 2
 batch_size = 45
 embedding_size = 128
 triplet_swapping = true
@@ -15,9 +15,9 @@ name = "different_backbone_4_margin"
 
 [training.pre_training]
 pre_trained = true
+frozen = true
 epoch_unfreeze = 2000 # Number of epochs between layer unfreezes
-defrost = 1000 # When to start layer unfreezing
-frozen = false
+defrost = 0 # When to start layer unfreezing
 # TODO try permafrost 5 when I have all my hyperparameters tuned and I train for longer
 permafrost = 4 # Number of layers to unfreeze before leaving frozen, 0 to unfreeze all 
 refreeze = false # Refreeze previous layer after unfreezing one before
@@ -32,7 +32,7 @@ flip = true
 max_translation = [32, 16]
 max_rotation = 22
 max_scale = 0.125
-flip = false
+flip = true
 
 [data]
 shoeprint_data_dir = "/home/struan/Datasets/Siamese/Shoeprints"
