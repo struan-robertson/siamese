@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import torch
+import torchvision
 import torchvision.transforms.functional as F
 from PIL import Image
 from torch.utils.data import Dataset
@@ -56,7 +57,15 @@ class IndividualDataset(Dataset):
         file = self.files[idx]
         image = Image.open(file).convert("RGB")
 
-        return F.to_tensor(image)
+        return F.to_tensor(image), file
+
+
+def export_augmented(dataset: IndividualDataset, gpu_transform, save_dir: Path):
+    """Export augmented images to a directory."""
+    save_dir.mkdir(exist_ok=True)
+    for image, file in dataset:
+        transformed = gpu_transform(image)
+        torchvision.utils.save_image(transformed, save_dir / file.name)
 
 
 def gpu_transform(
@@ -69,9 +78,13 @@ def gpu_transform(
     offset_max_rotation: int = 10,
     offset_scale_diff: float = 0.25,
     flip: bool = True,
+    normalise: bool = True,
 ):
     """Initialise transforms for a dataset."""
-    transform_list = [transforms.Resize(image_size), transforms.Normalize(mean, std)]
+    transform_list = [transforms.Resize(image_size)]
+
+    if normalise:
+        transform_list.append(transforms.Normalize(mean, std))  # pyright: ignore [reportArgumentType]
 
     if offset:
         transform_list.append(
